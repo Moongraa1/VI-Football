@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>VI Football</title>
+  <meta name="description" content="VI Football — Ultimate Team. Draft, Store, Matches."/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,400;0,600;0,700;0,800;0,900;1,700&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="football.css"/>
+</head>
+<body>
+<div class="app-shell">
+
+  <!-- TOP BAR -->
+  <header class="top-bar" id="topBar">
+    <div class="tb-logo" id="logoHome"><span class="tb-vi">VI</span><span class="tb-foot">FOOTBALL</span></div>
+    <div class="tb-center" id="btnOpenLevelRewards" title="Дорога наград">
+      <div class="tb-lvl-row">
+        <span class="tb-lvl">LVL <b id="tbLevel">1</b></span>
+        <div class="tb-xp-wrap"><div class="tb-xp-fill" id="tbXpFill"></div></div>
+        <span class="tb-reward-badge hidden" id="tbRewardBadge">🎁</span>
+      </div>
+    </div>
+    <div class="tb-right">
+      <div class="tb-coin"><span class="tb-coin-star">&#9733;</span><span id="tbCoinVal">3 000</span></div>
+      <div class="tb-cards-badge"><span id="tbCardOwned">0</span><span class="tb-cards-sep">/</span><span>36</span></div>
+    </div>
+  </header>
+
+  <!-- MAIN CONTENT -->
+  <main class="app-main" id="mainStage">
+
+    <!-- ─── ЭКРАН: ГЛАВНОЕ МЕНЮ ─── -->
+    <section class="screen" id="screenMenu">
+      <div class="menu-brand">
+        <div class="menu-brand-title"><span class="brand-vi">VI</span><span class="brand-foot">FOOTBALL</span></div>
+        <div class="menu-brand-sub">ULTIMATE TEAM</div>
+      </div>
+
+      <!-- BIG DRAFT BANNER -->
+      <button class="draft-banner" id="tileDraft">
+        <div class="draft-banner__glow"></div>
+        <div class="draft-banner__content">
+          <div class="draft-banner__icon">&#9917;</div>
+          <div class="draft-banner__text">
+            <div class="draft-banner__title">DRAFT TOURNAMENT</div>
+            <div class="draft-banner__sub">&#1057;&#1086;&#1073;&#1077;&#1088;&#1080; &#1089;&#1086;&#1089;&#1090;&#1072;&#1074; &#1080; &#1074;&#1099;&#1080;&#1075;&#1088;&#1072;&#1081; &#1082;&#1091;&#1073;&#1086;&#1082;</div>
+          </div>
+          <div class="draft-banner__arrow">&#8250;</div>
+        </div>
+        <div class="draft-banner__badge">HOT</div>
+      </button>
+
+      <!-- MY CLUB BANNER -->
+      <button class="myclub-banner" id="tileMyClub">
+        <div class="myclub-banner__glow"></div>
+        <div class="myclub-banner__content">
+          <div class="myclub-banner__icon">&#128737;&#65039;</div>
+          <div class="myclub-banner__text">
+            <div class="myclub-banner__title">МОЙ КЛУБ (MY CLUB)</div>
+            <div class="myclub-banner__sub">Собери 11 лучших карт &bull; 2D-симуляция матча</div>
+          </div>
+          <div class="myclub-banner__badge" id="menuMyClubBadge">0/11</div>
+        </div>
+      </button>
+
+      <!-- BOTTOM TILES: STORE + MY CARDS -->
+      <div class="menu-tiles-row">
+        <button class="menu-tile-sm tile-store" id="tileStore">
+          <div class="tile-sm__shine"></div>
+          <div class="tile-sm__icon">&#128142;</div>
+          <div class="tile-sm__title">STORE</div>
+          <div class="tile-sm__sub">&#1086;&#1090; &#9733; 500</div>
+        </button>
+        <button class="menu-tile-sm tile-mycards" id="tileCollection">
+          <div class="tile-sm__shine"></div>
+          <div class="tile-sm__icon">&#127183;</div>
+          <div class="tile-sm__title">MY CARDS</div>
+          <div class="tile-sm__sub"><span id="menuCollPct">0%</span> &#1089;&#1086;&#1073;&#1088;&#1072;&#1085;&#1086;</div>
+        </button>
+      </div>
+
+      <div class="menu-footer">&#169; 2026 VI Football &nbsp;&#183;&nbsp; Season 1</div>
+    </section>
+
+    <!-- ─── ЭКРАН: МАГАЗИН ─── -->
+    <section class="screen hidden" id="screenStore">
+      <div class="screen-toprow">
+        <button class="btn-back" id="btnBackFromStore">&#8592;</button>
+        <div class="screen-heading">STORE</div>
+      </div>
+      <p class="screen-sub">&#1054;&#1090;&#1082;&#1088;&#1099;&#1074;&#1072;&#1081; &#1087;&#1072;&#1082;&#1080; &#1079;&#1072; VI Coins</p>
+
+      <!-- DAILY GIFT BANNER -->
+      <div class="daily-gift-card" id="dailyGiftCard">
+        <div class="daily-gift__glow"></div>
+        <div class="daily-gift__content">
+          <div class="daily-gift__icon">&#127873;</div>
+          <div class="daily-gift__text">
+            <div class="daily-gift__title">&#1045;&#1078;&#1077;&#1076;&#1085;&#1077;&#1074;&#1085;&#1099;&#1081; &#1087;&#1086;&#1076;&#1072;&#1088;&#1086;&#1082;</div>
+            <div class="daily-gift__sub" id="dailyGiftSub">500 &#1084;&#1086;&#1085;&#1077;&#1090; &#1080;&#1083;&#1080; &#1087;&#1072;&#1082; &#1088;&#1072;&#1079; &#1074; 24 &#1095;&#1072;&#1089;&#1072;</div>
+          </div>
+          <button class="daily-gift__btn" id="btnClaimDaily">&#1047;&#1072;&#1073;&#1088;&#1072;&#1090;&#1100;</button>
+        </div>
+      </div>
+      <div class="store-grid" id="storeGrid">
+        <div class="store-pack" data-pack="standard">
+          <div class="store-pack__tier">STANDARD</div>
+          <div class="store-pack__visual">&#128230;</div>
+          <div class="store-pack__name">Standard Pack</div>
+          <div class="store-pack__odds">Ultra: 0.2% &nbsp;|&nbsp; 85+: 2.8%</div>
+          <button class="store-pack__btn" data-pack="standard" data-cost="500">&#9733; 500</button>
+        </div>
+        <div class="store-pack" data-pack="pro">
+          <div class="store-pack__tier tier-pro">PRO</div>
+          <div class="store-pack__visual">&#127873;</div>
+          <div class="store-pack__name">Pro Pack</div>
+          <div class="store-pack__odds">75+ &#1075;&#1072;&#1088;. &nbsp;|&nbsp; Ultra: 2%</div>
+          <button class="store-pack__btn btn-pro" data-pack="pro" data-cost="1500">&#9733; 1 500</button>
+        </div>
+        <div class="store-pack" data-pack="elite">
+          <div class="store-pack__tier tier-elite">ELITE</div>
+          <div class="store-pack__visual">&#128142;</div>
+          <div class="store-pack__name">Elite Pack</div>
+          <div class="store-pack__odds">83+ &#1075;&#1072;&#1088;. &nbsp;|&nbsp; Ultra: 5%</div>
+          <button class="store-pack__btn btn-elite" data-pack="elite" data-cost="3000">&#9733; 3 000</button>
+        </div>
+        <div class="store-pack store-pack--matus" data-pack="matus">
+          <div class="store-pack__tier tier-matus">ULTRA</div>
+          <div class="store-pack__visual">&#127942;</div>
+          <div class="store-pack__name">Matus Pack</div>
+          <div class="store-pack__odds">88+ &#1075;&#1072;&#1088;. &nbsp;|&nbsp; Ultra: 25%!</div>
+          <button class="store-pack__btn btn-matus" data-pack="matus" data-cost="7000">&#9733; 7 000</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── ЭКРАН: REVEAL КАРТОЧКИ ─── -->
+    <section class="screen hidden" id="screenReveal">
+      <div class="reveal-label" id="revealLabel">&#1055;&#1086;&#1079;&#1076;&#1088;&#1072;&#1074;&#1083;&#1103;&#1077;&#1084;!</div>
+      <div class="flip-scene">
+        <div class="flip-card" id="flipCard">
+          <div class="flip-card-back">
+            <div class="flip-back-inner">&#127942;</div>
+          </div>
+          <div class="flip-card-front" id="flipCardFront"></div>
+        </div>
+      </div>
+      <div class="reveal-actions">
+        <button class="btn-gold" id="btnOpenAnother">&#9889; &#1054;&#1090;&#1082;&#1088;&#1099;&#1090;&#1100; &#1077;&#1097;&#1105;</button>
+        <button class="btn-ghost" id="btnRevealToMenu">&#8592; &#1042; &#1084;&#1077;&#1085;&#1102;</button>
+      </div>
+    </section>
+
+    <!-- ─── ЭКРАН: MY CARDS ─── -->
+    <section class="screen hidden" id="screenCollection">
+      <div class="screen-toprow">
+        <button class="btn-back" id="btnBackFromCollection">&#8592;</button>
+        <div class="screen-heading">MY CARDS</div>
+        <button class="btn-sell" id="btnSellDupes">&#128176; &#1044;&#1091;&#1073;&#1083;&#1080;</button>
+      </div>
+      <p class="screen-sub" id="collectionCount"></p>
+      <!-- NATIONS PROGRESS -->
+      <div class="nations-progress" id="nationsProgress"></div>
+      <div class="collection-grid" id="collectionGrid"></div>
+    </section>
+
+    <!-- ─── ЭКРАН: ВЫБОР ТАКТИКИ ─── -->
+    <section class="screen hidden" id="screenFormation">
+      <div class="screen-toprow">
+        <button class="btn-back" id="btnBackFromFormation">&#8592;</button>
+        <div class="screen-heading">FORMATION</div>
+      </div>
+      <p class="screen-sub">&#1042;&#1099;&#1073;&#1077;&#1088;&#1080; &#1089;&#1093;&#1077;&#1084;&#1091; &#1088;&#1072;&#1089;&#1089;&#1090;&#1072;&#1085;&#1086;&#1074;&#1082;&#1080;</p>
+      <div class="formation-grid" id="formationGrid"></div>
+    </section>
+
+    <!-- ─── ЭКРАН: ПОЛЕ ДРАФТА ─── -->
+    <section class="screen screen-draft hidden" id="screenDraft">
+      <div class="draft-topbar">
+        <button class="btn-back" id="btnBackFromDraft">&#8592;</button>
+        <div class="draft-stats">
+          <div class="draft-stat"><span class="ds-label">OVR</span><span class="ds-val" id="draftRating">&#8212;</span></div>
+          <div class="draft-stat"><span class="ds-label">CHEM</span><span class="ds-val" id="draftChemistry">0/33</span></div>
+        </div>
+      </div>
+      <div class="draft-pitch" id="draftField"></div>
+      <button class="btn-gold hidden" id="btnDraftDone" style="margin:12px auto;display:flex;">&#127942; &#1053;&#1072;&#1095;&#1072;&#1090;&#1100; &#1090;&#1091;&#1088;&#1085;&#1080;&#1088;</button>
+    </section>
+
+    <!-- ─── ЭКРАН: МАТЧ ─── -->
+    <section class="screen screen-match hidden" id="screenMatch">
+      <!-- Scoreboard -->
+      <div class="match-sb">
+        <div class="match-sb__club my-club">
+          <div class="match-sb__name">&#1042;&#1067;</div>
+          <div class="match-sb__score" id="matchScoreA">0</div>
+        </div>
+        <div class="match-sb__center">
+          <div class="match-minute" id="matchTimer">1'</div>
+          <div class="match-vs-label">VS</div>
+        </div>
+        <div class="match-sb__club ai-club">
+          <div class="match-sb__score" id="matchScoreB">0</div>
+          <div class="match-sb__name">&#1048;&#1048;</div>
+        </div>
+      </div>
+
+      <!-- Phase banner -->
+      <div class="match-phase" id="matchPhase">
+        <span class="match-phase__icon" id="matchPhaseIcon">&#9876;&#65039;</span>
+        <span class="match-phase__text" id="matchPhaseText">&#0040;&#1060;&#1040;&#1047;&#0041;</span>
+      </div>
+
+      <!-- Duel arena -->
+      <div class="match-arena">
+        <div class="arena-side arena-mine">
+          <div class="arena-label">&#1042;&#1040;&#1064;&#1040; &#1050;&#0065;&#1056;&#1058;&#1040;</div>
+          <div class="arena-card-slot" id="arenaMyCard"></div>
+        </div>
+        <div class="arena-vs">
+          <div class="arena-clash" id="arenaClash"></div>
+        </div>
+        <div class="arena-side arena-enemy">
+          <div class="arena-label">&#1050;&#0065;&#1056;&#1058;&#1040; &#1048;&#1048;</div>
+          <div class="arena-card-slot" id="arenaEnemyCard"></div>
+        </div>
+      </div>
+
+      <!-- Stats comparison -->
+      <div class="match-stats-cmp hidden" id="matchStatsCmp">
+        <div class="stat-cmp-row">
+          <span class="stat-cmp-val my" id="cmpMyVal">—</span>
+          <span class="stat-cmp-label" id="cmpLabel">ATK</span>
+          <span class="stat-cmp-val ai" id="cmpAiVal">—</span>
+        </div>
+      </div>
+
+      <!-- Result flash -->
+      <div class="match-result-flash hidden" id="matchResultFlash">
+        <div class="match-result-text" id="matchResultText">GOOOAL!</div>
+      </div>
+
+      <!-- Hand -->
+      <div class="match-hand-area">
+        <div class="match-hand-label">&#1042;&#1099;&#1073;&#1077;&#1088;&#1080; &#1080;&#1075;&#1088;&#1086;&#1082;&#1072; &#1076;&#1083;&#1103; &#1076;&#1091;&#1101;&#1083;&#1080;:</div>
+        <div class="match-hand" id="matchHand"></div>
+      </div>
+    </section>
+
+    <!-- ─── ЭКРАН: ИТОГ МАТЧА ─── -->
+    <section class="screen hidden" id="screenResult">
+      <div class="result-card">
+        <div class="result-icon" id="resultIcon">&#127942;</div>
+        <div class="result-title" id="resultTitle">&#1055;&#1054;&#1041;&#1045;&#1044;&#1040;!</div>
+        <div class="result-score" id="resultScore">0 : 0</div>
+        <div class="result-rewards" id="resultRewards"></div>
+        <button class="btn-gold" id="btnResultMenu" style="margin-top:8px;">&#8592; &#1042; &#1043;&#1083;&#1072;&#1074;&#1085;&#1086;&#1077; &#1084;&#1077;&#1085;&#1102;</button>
+      </div>
+    </section>
+
+    <!-- ─── ЭКРАН: МОЙ КЛУБ (MY CLUB) ─── -->
+    <section class="screen screen-myclub hidden" id="screenMyClub">
+      <div class="screen-toprow">
+        <button class="btn-back" id="btnBackFromMyClub">&#8592;</button>
+        <div class="screen-heading">&#1052;&#1054;&#1049; &#1050;&#1051;&#1059;&#1041;</div>
+        <div class="myclub-stats-badge">
+          <span class="mc-label">OVR</span>
+          <span class="mc-val" id="myClubOvr">&#8212;</span>
+        </div>
+      </div>
+      
+      <!-- Action buttons -->
+      <div class="myclub-actions">
+        <button class="btn-ghost myclub-btn-auto" id="btnMyClubAutoSquad">
+          <span>⚡</span> Автосостав
+        </button>
+        <button class="btn-ghost myclub-btn-stats" id="btnOpenClubStats">
+          <span>📊</span> Зал Славы
+        </button>
+        <button class="btn-gold myclub-btn-play" id="btnOpenTournaments">
+          <span>🏆</span> Турниры
+        </button>
+      </div>
+
+      <!-- Club Mastery Card -->
+      <div class="myclub-mastery-card" id="myClubMasteryCard">
+        <div class="myclub-mastery-left">
+          <span class="mcb-icon">🔥</span>
+          <div class="mcb-info">
+            <div class="mcb-title" id="myClubMasteryTitle">Сыгранность: 0 матчей</div>
+            <div class="mcb-sub" id="myClubMasterySub">Сыграйте 5 матчей для статуса «Сыгранная связка» (+1 OVR)</div>
+          </div>
+        </div>
+        <div class="mcb-bonus" id="myClubMasteryBonus">+0 OVR</div>
+      </div>
+
+      <!-- Team Roles Card -->
+      <div class="myclub-roles-card" id="myClubRolesCard">
+        <div class="roles-card-header">
+          <span class="roles-card-title">👑 РОЛИ В КОМАНДЕ</span>
+          <span class="roles-card-hint">Назначить</span>
+        </div>
+        <div class="roles-grid">
+          <div class="role-item" data-role="captain" id="roleItemCaptain">
+            <div class="role-badge">👑 КАПИТАН</div>
+            <div class="role-player" id="rolePlayerCaptain">Не назначен</div>
+          </div>
+          <div class="role-item" data-role="penalty" id="roleItemPenalty">
+            <div class="role-badge">🎯 ПЕНАЛЬТИ</div>
+            <div class="role-player" id="rolePlayerPenalty">Не назначен</div>
+          </div>
+          <div class="role-item" data-role="setPieces" id="roleItemSetPieces">
+            <div class="role-badge">📐 СТАНДАРТЫ</div>
+            <div class="role-player" id="rolePlayerSetPieces">Не назначен</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="myclub-info-row">
+        <span class="myclub-info-text">В составе: <b id="myClubCount">0/11</b></span>
+        <span class="myclub-info-tip">Клик по слоту: прокачка или смена</span>
+      </div>
+
+      <!-- Pitch for My Club -->
+      <div class="myclub-pitch" id="myClubPitch"></div>
+
+      <!-- Bench / Substitutes Section -->
+      <div class="myclub-bench-section">
+        <div class="bench-header">
+          <div class="bench-title">🪑 СКАМЬЯ ЗАПАСНЫХ (3)</div>
+          <div class="bench-tip">Игроки для замен при усталости или травме</div>
+        </div>
+        <div class="myclub-bench" id="myClubBench"></div>
+      </div>
+    </section>
+
+    <!-- ─── ЭКРАН: 2D-СИМУЛЯЦИЯ МАТЧА (РАДАР И ЛЕНТА СОБЫТИЙ) ─── -->
+    <section class="screen screen-sim hidden" id="screenSimMatch">
+      <!-- Sim Top Bar / Scoreboard -->
+      <div class="sim-scoreboard">
+        <div class="sim-club sim-club--my">
+          <div class="sim-club__name" id="simMyClubName">МОЙ КЛУБ</div>
+          <div class="sim-club__ovr" id="simMyClubOvr">OVR —</div>
+        </div>
+        <div class="sim-score-box">
+          <div class="sim-period-badge" id="simPeriod">1-Й ТАЙМ</div>
+          <div class="sim-score"><span id="simScoreA">0</span> : <span id="simScoreB">0</span></div>
+          <div class="sim-timer-row">
+            <span class="sim-timer" id="simClock">00:00</span>
+            <button class="sim-speed-btn" id="btnSimSpeed">1x</button>
+            <button class="sim-subs-btn" id="btnSimSubs">🔄 Замена (0/3)</button>
+          </div>
+        </div>
+        <div class="sim-club sim-club--ai">
+          <div class="sim-club__name" id="simAiClubName">FC APEX</div>
+          <div class="sim-club__ovr" id="simAiClubOvr">OVR —</div>
+        </div>
+      </div>
+
+      <!-- 2D Radar Canvas -->
+      <div class="sim-radar-wrap">
+        <canvas id="simRadarCanvas" class="sim-radar-canvas" width="414" height="230"></canvas>
+        <div class="sim-radar-overlay" id="simGoalOverlay">
+          <div class="sim-goal-banner">⚽ GOOOAL!</div>
+        </div>
+      </div>
+
+      <!-- Interactive Tactical Pad -->
+      <div class="sim-tactics-bar" id="simTacticsBar">
+        <button class="tactic-btn" data-tactic="bus" id="btnTacticBus">
+          <span class="tactic-icon">🛡️</span>
+          <div class="tactic-text">
+            <span class="tactic-name">Автобус</span>
+            <span class="tactic-sub">-40% риск</span>
+          </div>
+        </button>
+        <button class="tactic-btn active" data-tactic="balance" id="btnTacticBalance">
+          <span class="tactic-icon">⚖️</span>
+          <div class="tactic-text">
+            <span class="tactic-name">Баланс</span>
+            <span class="tactic-sub">Стандарт</span>
+          </div>
+        </button>
+        <button class="tactic-btn" data-tactic="press" id="btnTacticPress">
+          <span class="tactic-icon">⚔️</span>
+          <div class="tactic-text">
+            <span class="tactic-name">Прессинг</span>
+            <span class="tactic-sub">x2 ударов</span>
+          </div>
+        </button>
+      </div>
+
+      <!-- Live Text Blog / Event Feed -->
+      <div class="sim-feed-container">
+        <div class="sim-feed-header">
+          <div class="sim-feed-title"><span class="sim-live-indicator">🔴 LIVE</span> ТРАНСЛЯЦИЯ МАТЧА</div>
+          <div class="sim-feed-sub" id="simMatchSub">Турнирный матч</div>
+        </div>
+        <div class="sim-feed-list" id="simFeedList">
+          <!-- Dynamically populated events -->
+        </div>
+      </div>
+    </section>
+
+  </main><!-- /app-main -->
+
+</div><!-- /app-shell -->
+
+<!-- PICKER MODAL -->
+<div class="modal-overlay hidden" id="modalPicker">
+  <div class="modal-box">
+    <div class="modal-title">&#1042;&#1099;&#1073;&#1077;&#1088;&#1080; &#1080;&#1075;&#1088;&#1086;&#1082;&#1072;</div>
+    <div class="picker-grid" id="pickerGrid"></div>
+    <button class="btn-ghost" id="btnPickerClose" style="margin-top:10px;width:100%;">&#1054;&#1090;&#1084;&#1077;&#1085;&#1072;</button>
+  </div>
+</div>
+
+<!-- MY CLUB CARD PICKER MODAL -->
+<div class="modal-overlay hidden" id="modalMyClubPicker">
+  <div class="modal-box">
+    <div class="modal-toprow">
+      <div class="modal-title" id="myClubPickerTitle">&#1042;&#1067;&#1041;&#1045;&#1056;&#1048; &#1048;&#1043;&#1056;&#1054;&#1050;&#1040;</div>
+      <button class="modal-close-icon" id="btnCloseMyClubPicker">&times;</button>
+    </div>
+    <div class="picker-grid" id="myClubPickerGrid"></div>
+  </div>
+</div>
+
+<!-- TOURNAMENTS SELECTION MODAL -->
+<div class="modal-overlay hidden" id="modalTournaments">
+  <div class="modal-box modal-box--tournaments">
+    <div class="modal-toprow">
+      <div class="modal-title">&#127942; &#1042;&#1067;&#1041;&#1054;&#1056; &#1058;&#1059;&#1056;&#1053;&#1048;&#1056;&#1040;</div>
+      <button class="modal-close-icon" id="btnCloseTournaments">&times;</button>
+    </div>
+    <div class="tournaments-subtitle">&#1057;&#1088;&#1072;&#1079;&#1080;&#1089;&#1100; &#1089;&#1086;&#1089;&#1090;&#1072;&#1074;&#1086;&#1084; &laquo;&#1052;&#1086;&#1081; &#1050;&#1083;&#1091;&#1073;&raquo; &#1087;&#1088;&#1086;&#1090;&#1080;&#1074; &#1083;&#1091;&#1095;&#1096;&#1080;&#1093; &#1082;&#1083;&#1091;&#1073;&#1086;&#1074; &#1084;&#1080;&#1088;&#1072;!</div>
+    <div class="tournaments-list" id="tournamentsList"></div>
+  </div>
+</div>
+
+<!-- SIM MATCH FINAL RESULT MODAL -->
+<div class="modal-overlay hidden" id="modalSimResult">
+  <div class="modal-box modal-box--result">
+    <div class="result-icon" id="simResultIcon">&#127942;</div>
+    <div class="result-title" id="simResultTitle">&#1055;&#1054;&#1041;&#1045;&#1044;&#1040;!</div>
+    <div class="sim-final-teams" id="simFinalTeams">&#1052;&#1054;&#1049; &#1050;&#1051;&#1059;&#1041; vs FC APEX</div>
+    <div class="result-score" id="simFinalScore">2 : 1</div>
+    <div class="result-rewards" id="simFinalRewards"></div>
+    <div class="sim-result-actions">
+      <button class="btn-gold" id="btnSimContinueTournament">&#127942; &#1055;&#1088;&#1086;&#1076;&#1086;&#1083;&#1078;&#1080;&#1090;&#1100; &#1090;&#1091;&#1088;&#1085;&#1080;&#1088;</button>
+      <button class="btn-ghost" id="btnSimBackToClub">&#128737;&#65039; &#1042; &#1052;&#1086;&#1081; &#1050;&#1083;&#1091;&#1073;</button>
+      <button class="btn-ghost" id="btnSimBackToMenu">&#8592; &#1042; &#1043;&#1083;&#1072;&#1074;&#1085;&#1086;&#1077; &#1084;&#1077;&#1085;&#1102;</button>
+    </div>
+  </div>
+</div>
+
+<!-- LEVEL REWARDS MODAL -->
+<div class="modal-overlay hidden" id="modalLevelRewards">
+  <div class="modal-box modal-box--rewards">
+    <div class="modal-toprow">
+      <div class="modal-title">🏆 ДОРОГА НАГРАД</div>
+      <button class="modal-close-icon" id="btnCloseLevelRewards">&times;</button>
+    </div>
+    <div class="rewards-subtitle">Повышай уровень тренера и забирай награды (LVL 1–10):</div>
+    <div class="rewards-track" id="rewardsTrack"></div>
+  </div>
+</div>
+
+<!-- CARD ACTION MODAL (Choice: Train or Swap/Remove) -->
+<div class="modal-overlay hidden" id="modalCardAction">
+  <div class="modal-box modal-box--action">
+    <div class="modal-toprow">
+      <div class="modal-title" id="cardActionTitle">ДЕЙСТВИЕ С ИГРОКОМ</div>
+      <button class="modal-close-icon" id="btnCloseCardAction">&times;</button>
+    </div>
+    <div class="card-action-preview" id="cardActionPreview"></div>
+    <div class="card-action-buttons">
+      <button class="btn-gold" id="btnActionTrain">⚡ Тренировочный лагерь</button>
+      <button class="btn-ghost" id="btnActionSwap">🔄 Заменить игрока</button>
+      <button class="btn-ghost" id="btnActionRemoveBench" style="display:none;color:var(--red);">❌ Убрать со скамьи</button>
+    </div>
+  </div>
+</div>
+
+<!-- TRAINING CAMP MODAL (Skill Points & Upgrades) -->
+<div class="modal-overlay hidden" id="modalTrainingCamp">
+  <div class="modal-box modal-box--training">
+    <div class="modal-toprow">
+      <div class="modal-title">⚡ ТРЕНИРОВОЧНЫЙ ЛАГЕРЬ</div>
+      <button class="modal-close-icon" id="btnCloseTrainingCamp">&times;</button>
+    </div>
+    <div class="training-header">
+      <div class="training-card-wrap" id="trainingCardWrap"></div>
+      <div class="training-summary">
+        <div class="training-name" id="trainingPlayerName">ИГРОК</div>
+        <div class="training-pos" id="trainingPlayerPos">ST • 88 OVR</div>
+        
+        <div class="training-xp-box">
+          <div class="training-xp-labels">
+            <span>Опыт карточки (XP)</span>
+            <b id="trainingXpText">0 / 100 XP</b>
+          </div>
+          <div class="training-xp-bar">
+            <div class="training-xp-fill" id="trainingXpFill" style="width:0%;"></div>
+          </div>
+          <div class="training-sp-badge">
+            Очки навыков (SP): <b id="trainingSpCount">0</b>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="training-skills-list">
+      <div class="skill-row" data-skill="pac">
+        <div class="skill-info">
+          <span class="skill-icon">⚡</span>
+          <div>
+            <div class="skill-name">СКОРОСТЬ (PAC)</div>
+            <div class="skill-desc">Быстрее рывки и возвраты на 2D-радаре</div>
+          </div>
+        </div>
+        <div class="skill-val-wrap">
+          <span class="skill-val" id="skillValPac">+0</span>
+          <button class="btn-skill-plus" data-skill="pac">+</button>
+        </div>
+      </div>
+
+      <div class="skill-row" data-skill="sho">
+        <div class="skill-info">
+          <span class="skill-icon">🎯</span>
+          <div>
+            <div class="skill-name">УДАР (SHO)</div>
+            <div class="skill-desc">Повышает процент реализации моментов</div>
+          </div>
+        </div>
+        <div class="skill-val-wrap">
+          <span class="skill-val" id="skillValSho">+0</span>
+          <button class="btn-skill-plus" data-skill="sho">+</button>
+        </div>
+      </div>
+
+      <div class="skill-row" data-skill="pas">
+        <div class="skill-info">
+          <span class="skill-icon">🧠</span>
+          <div>
+            <div class="skill-name">ПАС (PAS)</div>
+            <div class="skill-desc">Снижает процент перехватов мяча соперником</div>
+          </div>
+        </div>
+        <div class="skill-val-wrap">
+          <span class="skill-val" id="skillValPas">+0</span>
+          <button class="btn-skill-plus" data-skill="pas">+</button>
+        </div>
+      </div>
+
+      <div class="skill-row" data-skill="def">
+        <div class="skill-info">
+          <span class="skill-icon">🛡️</span>
+          <div>
+            <div class="skill-name">ОТБОР (DEF)</div>
+            <div class="skill-desc">Повышает частоту чистых отборов мяча</div>
+          </div>
+        </div>
+        <div class="skill-val-wrap">
+          <span class="skill-val" id="skillValDef">+0</span>
+          <button class="btn-skill-plus" data-skill="def">+</button>
+        </div>
+      </div>
+
+      <div class="skill-row" data-skill="ref">
+        <div class="skill-info">
+          <span class="skill-icon">🧤</span>
+          <div>
+            <div class="skill-name">ВРАТАРЬ (REF / DIV)</div>
+            <div class="skill-desc">Увеличивает вероятность отразить удар</div>
+          </div>
+        </div>
+        <div class="skill-val-wrap">
+          <span class="skill-val" id="skillValRef">+0</span>
+          <button class="btn-skill-plus" data-skill="ref">+</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ROLES PICKER MODAL -->
+<div class="modal-overlay hidden" id="modalRolesPicker">
+  <div class="modal-box modal-box--roles">
+    <div class="modal-toprow">
+      <div class="modal-title" id="rolesPickerTitle">НАЗНАЧЕНИЕ РОЛИ</div>
+      <button class="modal-close-icon" id="btnCloseRolesPicker">&times;</button>
+    </div>
+    <div class="roles-picker-sub" id="rolesPickerSub">Выберите игрока основы:</div>
+    <div class="roles-candidates-list" id="rolesCandidatesList"></div>
+  </div>
+</div>
+
+<!-- IN-GAME SUBSTITUTIONS MODAL -->
+<div class="modal-overlay hidden" id="modalSimSubs">
+  <div class="modal-box modal-box--subs">
+    <div class="modal-toprow">
+      <div class="modal-title">🔄 СДЕЛАТЬ ЗАМЕНУ (<span id="simSubsRemaining">3</span>/3)</div>
+      <button class="modal-close-icon" id="btnCloseSimSubs">&times;</button>
+    </div>
+    <div class="subs-subtitle">Матч на паузе. Выберите запасного и игрока на поле:</div>
+    
+    <div class="subs-dual-container">
+      <div class="subs-column">
+        <div class="subs-col-title">🪑 ЗАПАСНЫЕ (СВЕЖИЕ)</div>
+        <div class="subs-list" id="subsBenchList"></div>
+      </div>
+      <div class="subs-column">
+        <div class="subs-col-title">⚽ ИГРОКИ НА ПОЛЕ</div>
+        <div class="subs-list" id="subsPitchList"></div>
+      </div>
+    </div>
+
+    <button class="btn-gold" id="btnConfirmSub" disabled style="width:100%;margin-top:12px;">
+      Подтвердить замену
+    </button>
+  </div>
+</div>
+
+<!-- CLUB STATS & HALL OF FAME MODAL -->
+<div class="modal-overlay hidden" id="modalClubStats">
+  <div class="modal-box modal-box--stats">
+    <div class="modal-toprow">
+      <div class="modal-title">📊 СТАТИСТИКА И ЗАЛ СЛАВЫ</div>
+      <button class="modal-close-icon" id="btnCloseClubStats">&times;</button>
+    </div>
+
+    <!-- Club Record Totals -->
+    <div class="stats-totals-grid">
+      <div class="stat-tot-box">
+        <div class="stat-tot-val" id="stMatches">0</div>
+        <div class="stat-tot-lbl">Матчей</div>
+      </div>
+      <div class="stat-tot-box">
+        <div class="stat-tot-val stat-win" id="stWins">0</div>
+        <div class="stat-tot-lbl">Побед</div>
+      </div>
+      <div class="stat-tot-box">
+        <div class="stat-tot-val stat-draw" id="stDraws">0</div>
+        <div class="stat-tot-lbl">Ничьих</div>
+      </div>
+      <div class="stat-tot-box">
+        <div class="stat-tot-val stat-loss" id="stLosses">0</div>
+        <div class="stat-tot-lbl">Поражений</div>
+      </div>
+      <div class="stat-tot-box">
+        <div class="stat-tot-val" id="stGoals">0:0</div>
+        <div class="stat-tot-lbl">Мячи</div>
+      </div>
+      <div class="stat-tot-box">
+        <div class="stat-tot-val" id="stCleanSheets">0</div>
+        <div class="stat-tot-lbl">Сухие матчи</div>
+      </div>
+    </div>
+
+    <!-- Hall of Fame Leaders Podium -->
+    <div class="hof-section">
+      <div class="hof-title">🏆 ЗАЛ СЛАВЫ КЛУБА</div>
+      <div class="hof-podium">
+        <div class="hof-card">
+          <div class="hof-badge">🥇 ЛУЧШИЙ БОМБАРДИР</div>
+          <div class="hof-name" id="hofTopScorer">—</div>
+          <div class="hof-stat" id="hofTopScorerStat">0 голов</div>
+        </div>
+        <div class="hof-card">
+          <div class="hof-badge">🧤 СТЕНА КЛУБА</div>
+          <div class="hof-name" id="hofTopGk">—</div>
+          <div class="hof-stat" id="hofTopGkStat">0 сухих игр</div>
+        </div>
+        <div class="hof-card">
+          <div class="hof-badge">🎖️ ГВАРДЕЕЦ</div>
+          <div class="hof-name" id="hofTopCaps">—</div>
+          <div class="hof-stat" id="hofTopCapsStat">0 матчей</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Club Quests & Achievements -->
+    <div class="quests-section">
+      <div class="quests-title">🎯 КЛУБНЫЕ ДОСТИЖЕНИЯ</div>
+      <div class="quests-list" id="questsList">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+  </div>
+</div>
+<div class="flash-overlay" id="flashOverlay"></div>
+<!-- Particles -->
+<canvas class="particles-canvas" id="particlesCanvas"></canvas>
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script src="football.js"></script>
+</body>
+</html>
