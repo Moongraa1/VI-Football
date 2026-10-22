@@ -923,19 +923,34 @@ function rarityBadgeText(r) {
   return r === 'ultra_legend' ? 'Ultra' : 'Legend';
 }
 
+function getCountryFlag(code) {
+  if (code === 'ABH') {
+    return `<img src="pers/flags/abh.svg" alt="ABH" class="flag-icon" style="width: 18px; height: 12px; vertical-align: middle; border-radius: 2px; object-fit: cover; display: inline-block;" onerror="this.onerror=null;this.src='https://flagcdn.com/w40/ge-ab.png';">`;
+  }
+  const flagMap = {
+    UZB: '🇺🇿',
+    RUS: '🇷🇺',
+    KAZ: '🇰🇿',
+    SLV: '🇸🇻',
+    NIC: '🇳🇮',
+    TJK: '🇹🇯'
+  };
+  return flagMap[code] || '⚽';
+}
+
 function renderNationsProgress() {
   const container = document.getElementById('nationsProgress');
   if (!container) return;
   container.innerHTML = '';
 
   const NATION_NAMES = {
-    UZB: { name: 'Узбекистан', flag: '🇺🇿' },
-    RUS: { name: 'Россия', flag: '🇷🇺' },
-    KAZ: { name: 'Казахстан', flag: '🇰🇿' },
-    ABH: { name: 'Абхазия', flag: '🇬🇪' },
-    SLV: { name: 'Сальвадор', flag: '🇸🇻' },
-    NIC: { name: 'Никарагуа', flag: '🇳🇮' },
-    TJK: { name: 'Таджикистан', flag: '🇹🇯' }
+    UZB: { name: 'Узбекистан', flag: getCountryFlag('UZB') },
+    RUS: { name: 'Россия', flag: getCountryFlag('RUS') },
+    KAZ: { name: 'Казахстан', flag: getCountryFlag('KAZ') },
+    ABH: { name: 'Абхазия', flag: getCountryFlag('ABH') },
+    SLV: { name: 'Сальвадор', flag: getCountryFlag('SLV') },
+    NIC: { name: 'Никарагуа', flag: getCountryFlag('NIC') },
+    TJK: { name: 'Таджикистан', flag: getCountryFlag('TJK') }
   };
 
   const nationStats = {};
@@ -2251,7 +2266,7 @@ function openTrainingCampModal(playerId) {
     wrap.appendChild(makeCardImg(player, ''));
   }
   if (nameEl) nameEl.textContent = player.name;
-  if (posEl) posEl.textContent = `${player.position} • ${player.rating} OVR • ${player.country}`;
+  if (posEl) posEl.innerHTML = `${player.position} • ${player.rating} OVR • ${getCountryFlag(player.country)} ${player.country}`;
 
   const currentXp = (up.xp || 0) % 100;
   if (xpText) xpText.textContent = `${currentXp} / 100 XP`;
@@ -2320,7 +2335,7 @@ function openRolesPickerModal(roleKey) {
         <img src="${p.image}" class="role-cand-img" alt="${p.name}">
         <div>
           <div class="role-cand-name">${p.name}</div>
-          <div class="role-cand-pos">${p.position} • ${p.country}</div>
+          <div class="role-cand-pos">${p.position} • ${getCountryFlag(p.country)} ${p.country}</div>
         </div>
       </div>
       <div class="role-cand-stat">${statText}</div>

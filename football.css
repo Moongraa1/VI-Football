@@ -772,6 +772,16 @@ body{
   align-items:center;
   gap:4px;
 }
+.flag-icon{
+  width:18px;
+  height:12px;
+  vertical-align:middle;
+  border-radius:2px;
+  object-fit:cover;
+  display:inline-block;
+  box-shadow:0 0 2px rgba(0,0,0,.6);
+  flex-shrink:0;
+}
 .nation-chip__count{
   color:var(--gold);
 }
