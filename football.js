@@ -232,9 +232,9 @@ const PLAYERS_DB = [
 ];
 
 /* ═══════════════════════════════════════════════════════════════════
-   2. FORMATIONS (Exact file paths from pers/Taktik/ on disk)
+   2. DRAFT FORMATIONS (Exact file paths from pers/Taktik/ on disk)
 ═══════════════════════════════════════════════════════════════════ */
-const FORMATIONS = [
+const DRAFT_FORMATIONS = [
   {
     name: "4-2-3-1",
     image: "pers/Taktik/4-2-3-1.jpg",
@@ -331,11 +331,14 @@ function defaultSave() {
     collection: {}, // playerId -> count
     claimedLevelRewards: [1],
     lastDailyGiftTime: 0,
+    myClubFormation: '4-3-3',
     myClubSquad: [null, null, null, null, null, null, null, null, null, null, null],
     myClubBench: [null, null, null],
     myClubRoles: { captain: null, penalty: null, setPieces: null },
     myClubMatchesTogether: 0,
-    playerUpgrades: {}, // cardId -> { xp: 0, sp: 0, pac: 0, sho: 0, pas: 0, def: 0, ref: 0 }
+    myClubTrainingPoints: 5,
+    playerUpgrades: {}, // cardId -> { pac: 0, sho: 0, pas: 0, def: 0, phy: 0 }
+    playerTrainingData: {}, // playerId -> { points: 3, stats: { pac: 0, ... } }
     clubStats: {
       matches: 0,
       wins: 0,
@@ -353,7 +356,8 @@ function defaultSave() {
       ucl: { stage: 0, won: false }
     },
     activeTournamentId: 'pl',
-    trophies: []
+    trophies: [],
+    trophyCounts: { pl: 0, laliga: 0, ucl: 0 }
   };
 }
 
@@ -365,6 +369,7 @@ function loadSave() {
     const saveObj = Object.assign(defaultSave(), data);
     if (!Array.isArray(saveObj.claimedLevelRewards)) saveObj.claimedLevelRewards = [1];
     if (typeof saveObj.lastDailyGiftTime !== 'number') saveObj.lastDailyGiftTime = 0;
+    if (!saveObj.myClubFormation) saveObj.myClubFormation = '4-3-3';
     if (!Array.isArray(saveObj.myClubSquad) || saveObj.myClubSquad.length !== 11) {
       saveObj.myClubSquad = [null, null, null, null, null, null, null, null, null, null, null];
     }
@@ -375,8 +380,15 @@ function loadSave() {
       saveObj.myClubRoles = { captain: null, penalty: null, setPieces: null };
     }
     if (typeof saveObj.myClubMatchesTogether !== 'number') saveObj.myClubMatchesTogether = 0;
+    if (typeof saveObj.myClubTrainingPoints !== 'number') {
+      const rawTP = localStorage.getItem('myClubTrainingPoints');
+      saveObj.myClubTrainingPoints = (rawTP !== null && !isNaN(Number(rawTP))) ? Number(rawTP) : 5;
+    }
     if (!saveObj.playerUpgrades || typeof saveObj.playerUpgrades !== 'object') {
       saveObj.playerUpgrades = {};
+    }
+    if (!saveObj.playerTrainingData || typeof saveObj.playerTrainingData !== 'object') {
+      saveObj.playerTrainingData = {};
     }
     if (!saveObj.clubStats || typeof saveObj.clubStats !== 'object') {
       saveObj.clubStats = {
@@ -393,6 +405,12 @@ function loadSave() {
       };
     }
     if (!Array.isArray(saveObj.trophies)) saveObj.trophies = [];
+    if (!saveObj.trophyCounts || typeof saveObj.trophyCounts !== 'object') {
+      saveObj.trophyCounts = { pl: 0, laliga: 0, ucl: 0 };
+      saveObj.trophies.forEach(t => {
+        if (saveObj.trophyCounts[t] !== undefined) saveObj.trophyCounts[t]++;
+      });
+    }
     if (!saveObj.activeTournamentId) saveObj.activeTournamentId = 'pl';
     return saveObj;
   } catch(e) {
@@ -604,43 +622,78 @@ function getRandomItem(array) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   8. REALISTIC DYNAMIC RNG CURVE (OVR DECAY & EXCLUSION OF KOMILZHONOV 120)
-═══════════════════════════════════════════════════════════════════ */
-/*
-   Rarity weights based on OVR:
-   - 63–70 OVR: weight 100
-   - 71–79 OVR: weight 45
-   - 80–86 OVR: weight 12
-   - 87–92 OVR: weight 3
-   - 95–99 OVR (MATUS 99, DAVLETOV 95, ALPYSPAYEV 96): weight 0.3
+   8. FAIR RNG PACK PROBABILITIES & FILTERS
+   - Standard (500): <=80 OVR (97%), 81-84 (3%), 85+ (0%)
+   - Pro (1500): 75-85 OVR (94.5%), 86-89 (5%), 90+ (0.5%)
+   - Elite (3000): 83-88 OVR (85%), 89-92 (12%), 95+ (3%)
+   - Matus (7000): 89-92 OVR (75%), 95+ Ultra Legend (25%)
    - KOMILZHONOV 120 is strictly excluded from all packs (LVL 10 reward only)!
-*/
-function getCardWeight(rating) {
-  if (rating <= 70) return 100;
-  if (rating <= 79) return 45;
-  if (rating <= 86) return 12;
-  if (rating <= 92) return 3;
-  if (rating <= 99) return 0.3;
-  return 0.1;
-}
-
+═══════════════════════════════════════════════════════════════════ */
 function rollPackPlayer(packType) {
-  let minRating = 0;
-  if (packType === 'pro') minRating = 75;
-  if (packType === 'elite') minRating = 83;
-  if (packType === 'matus') minRating = 88;
-
   // STRICTLY EXCLUDE KOMILZHONOV 120 FROM ALL PACKS!
-  const pool = PLAYERS_DB.filter(p => p.personId !== 'komilzhonov' && p.id !== 'komilzhonov_120' && p.rating >= minRating);
-  if (!pool.length) return PLAYERS_DB.find(p => p.personId !== 'komilzhonov' && p.id !== 'komilzhonov_120');
+  const validCards = PLAYERS_DB.filter(p => p.personId !== 'komilzhonov' && p.id !== 'komilzhonov_120');
 
-  const totalWeight = pool.reduce((sum, p) => sum + getCardWeight(p.rating), 0);
-  let rand = Math.random() * totalWeight;
-  for (let i = 0; i < pool.length; i++) {
-    rand -= getCardWeight(pool[i].rating);
-    if (rand <= 0) return pool[i];
+  const rand = Math.random();
+
+  if (packType === 'standard') {
+    // 1. Standard Pack:
+    // - 3% chance: 81–84 OVR
+    // - 97% chance: <= 80 OVR
+    // - 85+ OVR: 0%
+    if (rand < 0.03) {
+      const pool = validCards.filter(p => p.rating >= 81 && p.rating <= 84);
+      if (pool.length) return getRandomItem(pool);
+    }
+    const pool = validCards.filter(p => p.rating <= 80);
+    return getRandomItem(pool);
+
+  } else if (packType === 'pro') {
+    // 2. Pro Pack:
+    // - 0.5% chance: 90+ OVR
+    // - 5% chance: 86–89 OVR
+    // - 94.5% chance: 75–85 OVR (guaranteed 75+)
+    if (rand < 0.005) {
+      const pool = validCards.filter(p => p.rating >= 90);
+      if (pool.length) return getRandomItem(pool);
+    } else if (rand < 0.055) {
+      const pool = validCards.filter(p => p.rating >= 86 && p.rating <= 89);
+      if (pool.length) return getRandomItem(pool);
+    }
+    const pool = validCards.filter(p => p.rating >= 75 && p.rating <= 85);
+    return getRandomItem(pool);
+
+  } else if (packType === 'elite') {
+    // 3. Elite Pack:
+    // - Guaranteed strictly 82+ OVR
+    // - 3% chance: Ultra Legend (95+)
+    // - 12% chance: 89–92 OVR
+    // - 85% chance: 83–88 OVR
+    if (rand < 0.03) {
+      const pool = validCards.filter(p => p.rating >= 95);
+      if (pool.length) return getRandomItem(pool);
+    } else if (rand < 0.15) {
+      const pool = validCards.filter(p => p.rating >= 89 && p.rating <= 92);
+      if (pool.length) return getRandomItem(pool);
+    }
+    const pool = validCards.filter(p => p.rating >= 82 && p.rating <= 88);
+    return getRandomItem(pool);
+
+  } else if (packType === 'matus') {
+    // 4. Matus / Ultra Pack:
+    // - Strictly 88+ OVR guaranteed
+    // - 25% chance: Ultra Legend (Matus 99, Davletov 95, Alpyspayev 96)
+    // - 75% chance: 89–92 OVR
+    if (rand < 0.25) {
+      const pool = validCards.filter(p => p.rating >= 95);
+      if (pool.length) return getRandomItem(pool);
+    }
+    const pool = validCards.filter(p => p.rating >= 88 && p.rating <= 92);
+    return getRandomItem(pool);
   }
-  return pool[pool.length - 1];
+
+  // Fallback
+  const fallback = validCards.filter(p => p.rating <= 80);
+  return getRandomItem(fallback);
 }
 
 let lastOpenedPackType = 'standard';
@@ -925,7 +978,7 @@ function rarityBadgeText(r) {
 
 function getCountryFlag(code) {
   if (code === 'ABH') {
-    return `<img src="pers/flags/abh.svg" alt="ABH" class="flag-icon" style="width: 18px; height: 12px; vertical-align: middle; border-radius: 2px; object-fit: cover; display: inline-block;" onerror="this.onerror=null;this.src='https://flagcdn.com/w40/ge-ab.png';">`;
+    return `<img src="https://flagcdn.com/w40/ge-ab.png" alt="ABH" class="flag-icon" style="width: 18px; height: 12px; vertical-align: middle; border-radius: 2px; object-fit: cover; display: inline-block;">`;
   }
   const flagMap = {
     UZB: '🇺🇿',
@@ -1056,8 +1109,13 @@ function buildCollectionGrid() {
     pos.className = 'coll-card__pos';
     pos.textContent = player.position;
 
+    const flag = document.createElement('span');
+    flag.className = 'coll-card__flag';
+    flag.innerHTML = getCountryFlag(player.country);
+
     meta.appendChild(rating);
     meta.appendChild(pos);
+    meta.appendChild(flag);
     body.appendChild(name);
     body.appendChild(meta);
     card.appendChild(body);
@@ -1119,8 +1177,8 @@ function buildFormationPicker() {
   const grid = document.getElementById('formationGrid');
   if (!grid) return;
   grid.innerHTML = '';
-
-  FORMATIONS.forEach(f => {
+  const list = typeof DRAFT_FORMATIONS !== 'undefined' ? DRAFT_FORMATIONS : [];
+  list.forEach(f => {
     const card = document.createElement('div');
     card.className = 'formation-card';
 
@@ -1419,14 +1477,17 @@ let matchEpisode = 0;
 const EPISODE_MINUTES = [18, 36, 52, 70, 86];
 
 function getPlayerAtk(player) {
-  const s = player.stats;
+  // STRICT SEPARATION: DRAFT mode uses ONLY raw BASE stats printed on the card!
+  // Any upgrades from playerTrainingData are 100% ignored in DRAFT duels.
+  const s = (player && player.stats) || {};
   return Math.max(s.pac || 0, s.sho || 0, s.dri || 0, s.pas || 0);
 }
 
 function getPlayerDef(player) {
-  const s = player.stats || {};
-  // Goalkeepers use their best defensive/saving stat in defense!
-  if (player.position === 'GK') {
+  // STRICT SEPARATION: DRAFT mode uses ONLY raw BASE stats printed on the card!
+  // Any upgrades from playerTrainingData are 100% ignored in DRAFT duels.
+  const s = (player && player.stats) || {};
+  if (player && player.position === 'GK') {
     return Math.max(s.def || 0, s.phy || 0, s.ref || 0, s.div || 0, player.rating || 0);
   }
   return Math.max(s.def || 0, s.phy || 0);
@@ -1789,11 +1850,6 @@ if (tileCollection) {
 const tileMyClub = document.getElementById('tileMyClub');
 if (tileMyClub) {
   tileMyClub.addEventListener('click', () => {
-    const unlockedCount = Object.keys(save.collection).filter(id => save.collection[id] > 0).length;
-    if (unlockedCount < 11) {
-      showToast(`Нужно минимум 11 открытых карт в коллекции! (У вас: ${unlockedCount}/11)`);
-      return;
-    }
     openMyClubScreen();
   });
 }
@@ -1801,26 +1857,229 @@ if (tileMyClub) {
 /* ═══════════════════════════════════════════════════════════════════
    17. МОЙ КЛУБ (MY CLUB) SQUAD LOGIC & PICKER
 ═══════════════════════════════════════════════════════════════════ */
-const MY_CLUB_SLOTS_DEF = [
-  { id: 0, pos: 'GK',  line: 'gk',  label: 'ВРТ' },
-  { id: 1, pos: 'LB',  line: 'def', label: 'ЛЗ' },
-  { id: 2, pos: 'CB',  line: 'def', label: 'ЦЗ' },
-  { id: 3, pos: 'CB',  line: 'def', label: 'ЦЗ' },
-  { id: 4, pos: 'RB',  line: 'def', label: 'ПЗ' },
-  { id: 5, pos: 'CM',  line: 'mid', label: 'ЦП' },
-  { id: 6, pos: 'CAM', line: 'mid', label: 'ЦАП' },
-  { id: 7, pos: 'CM',  line: 'mid', label: 'ЦП' },
-  { id: 8, pos: 'LW',  line: 'att', label: 'ЛВ' },
-  { id: 9, pos: 'ST',  line: 'st',  label: 'ФРВ' },
-  { id: 10, pos: 'RW', line: 'att', label: 'ПВ' }
-];
+const FORMATIONS = {
+  '4-2-3-1': [1, 3, 2, 4, 1],
+  '4-3-3':   [3, 3, 4, 1],
+  '5-3-2':   [2, 3, 5, 1],
+  '3-4-2-1': [1, 2, 4, 3, 1],
+  '4-1-4-1': [1, 4, 1, 4, 1]
+};
 
-const MY_CLUB_ROWS = [
-  [8, 9, 10],   // LW, ST, RW
-  [5, 6, 7],    // CM, CAM, CM
-  [1, 2, 3, 4], // LB, CB, CB, RB
-  [0]           // GK
-];
+const MY_CLUB_FORMATIONS = {
+  '4-3-3': {
+    name: '4-3-3',
+    desc: 'Классика с быстрыми флангами и центрфорвардом',
+    slots: [
+      { id: 0, pos: 'GK',  line: 'gk',  label: 'ВРТ' },
+      { id: 1, pos: 'LB',  line: 'def', label: 'ЛЗ' },
+      { id: 2, pos: 'CB',  line: 'def', label: 'ЦЗ' },
+      { id: 3, pos: 'CB',  line: 'def', label: 'ЦЗ' },
+      { id: 4, pos: 'RB',  line: 'def', label: 'ПЗ' },
+      { id: 5, pos: 'CM',  line: 'mid', label: 'ЦП' },
+      { id: 6, pos: 'CAM', line: 'mid', label: 'ЦАП' },
+      { id: 7, pos: 'CM',  line: 'mid', label: 'ЦП' },
+      { id: 8, pos: 'LW',  line: 'att', label: 'ЛВ' },
+      { id: 9, pos: 'ST',  line: 'st',  label: 'ФРВ' },
+      { id: 10, pos: 'RW', line: 'att', label: 'ПВ' }
+    ],
+    rows: [
+      [8, 9, 10],   // LW, ST, RW
+      [5, 6, 7],    // CM, CAM, CM
+      [1, 2, 3, 4], // LB, CB, CB, RB
+      [0]           // GK
+    ],
+    radarCoords: [
+      { x: 30,  y: 115, role: 'GK' },
+      { x: 80,  y: 42,  role: 'LB' },
+      { x: 74,  y: 88,  role: 'CB' },
+      { x: 74,  y: 142, role: 'CB' },
+      { x: 80,  y: 188, role: 'RB' },
+      { x: 140, y: 65,  role: 'CM' },
+      { x: 175, y: 115, role: 'CAM' },
+      { x: 140, y: 165, role: 'CM' },
+      { x: 235, y: 45,  role: 'LW' },
+      { x: 255, y: 115, role: 'ST' },
+      { x: 235, y: 185, role: 'RW' }
+    ]
+  },
+  '4-2-3-1': {
+    name: '4-2-3-1',
+    desc: 'Надежный опорный дуэт и три атакующих хавбека',
+    slots: [
+      { id: 0, pos: 'GK',  line: 'gk',  label: 'ВРТ' },
+      { id: 1, pos: 'LB',  line: 'def', label: 'ЛЗ' },
+      { id: 2, pos: 'CB',  line: 'def', label: 'ЦЗ' },
+      { id: 3, pos: 'CB',  line: 'def', label: 'ЦЗ' },
+      { id: 4, pos: 'RB',  line: 'def', label: 'ПЗ' },
+      { id: 5, pos: 'CDM', line: 'mid', label: 'ЦОП' },
+      { id: 6, pos: 'CDM', line: 'mid', label: 'ЦОП' },
+      { id: 7, pos: 'LM',  line: 'mid', label: 'ЛП' },
+      { id: 8, pos: 'CAM', line: 'mid', label: 'ЦАП' },
+      { id: 9, pos: 'RM',  line: 'mid', label: 'ПП' },
+      { id: 10, pos: 'ST', line: 'st',  label: 'ФРВ' }
+    ],
+    rows: [
+      [10],         // ST
+      [7, 8, 9],    // LM, CAM, RM
+      [5, 6],       // CDM, CDM
+      [1, 2, 3, 4], // LB, CB, CB, RB
+      [0]           // GK
+    ],
+    radarCoords: [
+      { x: 30,  y: 115, role: 'GK' },
+      { x: 80,  y: 42,  role: 'LB' },
+      { x: 74,  y: 88,  role: 'CB' },
+      { x: 74,  y: 142, role: 'CB' },
+      { x: 80,  y: 188, role: 'RB' },
+      { x: 130, y: 80,  role: 'CDM' },
+      { x: 130, y: 150, role: 'CDM' },
+      { x: 195, y: 45,  role: 'LM' },
+      { x: 195, y: 115, role: 'CAM' },
+      { x: 195, y: 185, role: 'RM' },
+      { x: 260, y: 115, role: 'ST' }
+    ]
+  },
+  '5-3-2': {
+    name: '5-3-2',
+    desc: 'Непробиваемая стена из 5 защитников и пара форвардов',
+    slots: [
+      { id: 0, pos: 'GK',  line: 'gk',  label: 'ВРТ' },
+      { id: 1, pos: 'LWB', line: 'def', label: 'ЛЗ' },
+      { id: 2, pos: 'CB',  line: 'def', label: 'ЦЗ' },
+      { id: 3, pos: 'CB',  line: 'def', label: 'ЦЗ' },
+      { id: 4, pos: 'CB',  line: 'def', label: 'ЦЗ' },
+      { id: 5, pos: 'RWB', line: 'def', label: 'ПЗ' },
+      { id: 6, pos: 'CM',  line: 'mid', label: 'ЦП' },
+      { id: 7, pos: 'CM',  line: 'mid', label: 'ЦП' },
+      { id: 8, pos: 'CM',  line: 'mid', label: 'ЦП' },
+      { id: 9, pos: 'ST',  line: 'st',  label: 'ФРВ' },
+      { id: 10, pos: 'ST', line: 'st',  label: 'ФРВ' }
+    ],
+    rows: [
+      [9, 10],            // ST, ST
+      [6, 7, 8],          // CM, CM, CM
+      [1, 2, 3, 4, 5],    // LWB, CB, CB, CB, RWB
+      [0]                 // GK
+    ],
+    radarCoords: [
+      { x: 30,  y: 115, role: 'GK' },
+      { x: 85,  y: 35,  role: 'LB' },
+      { x: 70,  y: 75,  role: 'CB' },
+      { x: 68,  y: 115, role: 'CB' },
+      { x: 70,  y: 155, role: 'CB' },
+      { x: 85,  y: 195, role: 'RB' },
+      { x: 150, y: 65,  role: 'CM' },
+      { x: 150, y: 115, role: 'CM' },
+      { x: 150, y: 165, role: 'CM' },
+      { x: 250, y: 88,  role: 'ST' },
+      { x: 250, y: 142, role: 'ST' }
+    ]
+  },
+  '3-4-2-1': {
+    name: '3-4-2-1',
+    desc: '3 защитника, плотная полузащита и 2 поднападающих',
+    slots: [
+      { id: 0, pos: 'GK',  line: 'gk',  label: 'ВРТ' },
+      { id: 1, pos: 'CB',  line: 'def', label: 'ЦЗ' },
+      { id: 2, pos: 'CB',  line: 'def', label: 'ЦЗ' },
+      { id: 3, pos: 'CB',  line: 'def', label: 'ЦЗ' },
+      { id: 4, pos: 'LM',  line: 'mid', label: 'ЛП' },
+      { id: 5, pos: 'CM',  line: 'mid', label: 'ЦП' },
+      { id: 6, pos: 'CM',  line: 'mid', label: 'ЦП' },
+      { id: 7, pos: 'RM',  line: 'mid', label: 'ПП' },
+      { id: 8, pos: 'CAM', line: 'mid', label: 'ЦАП' },
+      { id: 9, pos: 'CAM', line: 'mid', label: 'ЦАП' },
+      { id: 10, pos: 'ST', line: 'st',  label: 'ФРВ' }
+    ],
+    rows: [
+      [10],         // ST
+      [8, 9],       // CAM, CAM
+      [4, 5, 6, 7], // LM, CM, CM, RM
+      [1, 2, 3],    // CB, CB, CB
+      [0]           // GK
+    ],
+    radarCoords: [
+      { x: 30,  y: 115, role: 'GK' },
+      { x: 72,  y: 65,  role: 'CB' },
+      { x: 68,  y: 115, role: 'CB' },
+      { x: 72,  y: 165, role: 'CB' },
+      { x: 135, y: 38,  role: 'LM' },
+      { x: 135, y: 90,  role: 'CM' },
+      { x: 135, y: 140, role: 'CM' },
+      { x: 135, y: 192, role: 'RM' },
+      { x: 200, y: 80,  role: 'CAM' },
+      { x: 200, y: 150, role: 'CAM' },
+      { x: 260, y: 115, role: 'ST' }
+    ]
+  },
+  '4-1-4-1': {
+    name: '4-1-4-1',
+    desc: 'Опорный волнорез и широкая поддержка атаки',
+    slots: [
+      { id: 0, pos: 'GK',  line: 'gk',  label: 'ВРТ' },
+      { id: 1, pos: 'LB',  line: 'def', label: 'ЛЗ' },
+      { id: 2, pos: 'CB',  line: 'def', label: 'ЦЗ' },
+      { id: 3, pos: 'CB',  line: 'def', label: 'ЦЗ' },
+      { id: 4, pos: 'RB',  line: 'def', label: 'ПЗ' },
+      { id: 5, pos: 'CDM', line: 'mid', label: 'ЦОП' },
+      { id: 6, pos: 'LM',  line: 'mid', label: 'ЛП' },
+      { id: 7, pos: 'CM',  line: 'mid', label: 'ЦП' },
+      { id: 8, pos: 'CM',  line: 'mid', label: 'ЦП' },
+      { id: 9, pos: 'RM',  line: 'mid', label: 'ПП' },
+      { id: 10, pos: 'ST', line: 'st',  label: 'ФРВ' }
+    ],
+    rows: [
+      [10],            // ST
+      [6, 7, 8, 9],    // LM, CM, CM, RM
+      [5],             // CDM
+      [1, 2, 3, 4],    // LB, CB, CB, RB
+      [0]              // GK
+    ],
+    radarCoords: [
+      { x: 30,  y: 115, role: 'GK' },
+      { x: 80,  y: 42,  role: 'LB' },
+      { x: 74,  y: 88,  role: 'CB' },
+      { x: 74,  y: 142, role: 'CB' },
+      { x: 80,  y: 188, role: 'RB' },
+      { x: 125, y: 115, role: 'CDM' },
+      { x: 185, y: 42,  role: 'LM' },
+      { x: 185, y: 90,  role: 'CM' },
+      { x: 185, y: 140, role: 'CM' },
+      { x: 185, y: 188, role: 'RM' },
+      { x: 260, y: 115, role: 'ST' }
+    ]
+  }
+};
+
+function getMyClubFormation() {
+  const fId = save.myClubFormation || '4-3-3';
+  return MY_CLUB_FORMATIONS[fId] || MY_CLUB_FORMATIONS['4-3-3'];
+}
+function getMyClubSlotsDef() {
+  return getMyClubFormation().slots;
+}
+function getMyClubRows() {
+  return getMyClubFormation().rows;
+}
+
+// Backwards-compatibility proxies for any direct references to MY_CLUB_SLOTS_DEF / MY_CLUB_ROWS
+const MY_CLUB_SLOTS_DEF = new Proxy([], {
+  get(target, prop) {
+    const slots = getMyClubSlotsDef();
+    if (prop === 'length') return slots.length;
+    if (prop in slots) return slots[prop];
+    return target[prop];
+  }
+});
+
+const MY_CLUB_ROWS = new Proxy([], {
+  get(target, prop) {
+    const rows = getMyClubRows();
+    if (prop === 'length') return rows.length;
+    if (prop in rows) return rows[prop];
+    return target[prop];
+  }
+});
 
 let activeMyClubSlot = 0;
 
@@ -1856,123 +2115,336 @@ function getClubMasteryData(matches) {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   17.1 ИНДИВИДУАЛЬНЫЙ ТРЕНИРОВОЧНЫЙ ЦЕНТР: PLAYER TRAINING DATA & TP
+═══════════════════════════════════════════════════════════════════ */
+function getAllPlayerTrainingData() {
+  let data = {};
+  try {
+    const raw = localStorage.getItem('playerTrainingData');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') data = parsed;
+    }
+  } catch (e) {}
+  if (!Object.keys(data).length && save.playerTrainingData && typeof save.playerTrainingData === 'object') {
+    data = save.playerTrainingData;
+  }
+  return data;
+}
+
+function saveAllPlayerTrainingData(data) {
+  try {
+    localStorage.setItem('playerTrainingData', JSON.stringify(data));
+  } catch (e) {}
+  save.playerTrainingData = data;
+  writeSave();
+  updateTrainingHubBadge();
+}
+
+function getPlayerTrainingData(playerId, position) {
+  if (!playerId) return { points: 0, stats: { pac: 0, sho: 0, pas: 0, def: 0, phy: 0 } };
+  const all = getAllPlayerTrainingData();
+  const pid = String(playerId);
+  const isGK = position === 'GK' || (PLAYERS_DB.find(p => p.id === playerId)?.position === 'GK');
+  const defaultStats = isGK
+    ? { div: 0, han: 0, kic: 0, ref: 0, pos: 0 }
+    : { pac: 0, sho: 0, pas: 0, def: 0, phy: 0 };
+
+  if (!all[pid]) {
+    // Check if there was legacy upgrade data
+    let legacyStats = {};
+    try {
+      const rawLegacy = localStorage.getItem('playerUpgrades');
+      if (rawLegacy) {
+        const parsedL = JSON.parse(rawLegacy);
+        if (parsedL && parsedL[pid]) legacyStats = parsedL[pid];
+      }
+    } catch (e) {}
+    if (!Object.keys(legacyStats).length && save.playerUpgrades && save.playerUpgrades[pid]) {
+      legacyStats = save.playerUpgrades[pid];
+    }
+
+    all[pid] = {
+      points: 2, // starter bonus for player
+      stats: { ...defaultStats, ...legacyStats }
+    };
+    saveAllPlayerTrainingData(all);
+  } else {
+    if (typeof all[pid].points !== 'number') all[pid].points = 0;
+    if (!all[pid].stats || typeof all[pid].stats !== 'object') {
+      all[pid].stats = { ...defaultStats };
+    } else {
+      for (const k of Object.keys(defaultStats)) {
+        if (typeof all[pid].stats[k] !== 'number') all[pid].stats[k] = 0;
+      }
+    }
+  }
+  return all[pid];
+}
+
+function getPlayerUpgrade(playerId) {
+  if (!playerId) return {};
+  const pData = getPlayerTrainingData(playerId);
+  return pData.stats || {};
+}
+
+function getPlayerInvestedPoints(playerData) {
+  if (!playerData || !playerData.stats) return 0;
+  const s = playerData.stats;
+  // Guaranteed summation of all characteristics (numbers, via Number()):
+  return (Number(s.pac) || 0) + 
+         (Number(s.sho) || 0) + 
+         (Number(s.pas) || 0) + 
+         (Number(s.def) || 0) + 
+         (Number(s.phy) || 0) +
+         (Number(s.div) || 0) +
+         (Number(s.han) || 0) +
+         (Number(s.kic) || 0) +
+         (Number(s.ref) || 0) +
+         (Number(s.pos) || 0);
+}
+
+function getPlayerBonusOvr(playerId) {
+  if (!playerId) return 0;
+  const pData = getPlayerTrainingData(playerId);
+  const total = getPlayerInvestedPoints(pData);
+  return Math.floor(total / 5);
+}
+
+function getPlayerEffectiveRating(player) {
+  if (!player) return 75;
+  const bonus = getPlayerBonusOvr(player.id);
+  return (player.rating || 75) + bonus;
+}
+
+function updateTrainingHubBadge() {
+  const allData = getAllPlayerTrainingData();
+  let totalPoints = 0;
+  const ownedIds = Object.keys(save.collection).filter(id => save.collection[id] > 0);
+  const squadIds = (save.myClubSquad || []).filter(Boolean);
+  const allRelevant = Array.from(new Set([...ownedIds, ...squadIds]));
+  allRelevant.forEach(pid => {
+    if (allData[pid] && typeof allData[pid].points === 'number') {
+      totalPoints += allData[pid].points;
+    }
+  });
+
+  const elBtnVal = document.getElementById('thPointsVal');
+  if (elBtnVal) elBtnVal.textContent = totalPoints;
+
+  if (activeTrainingPlayerId) {
+    const curPData = getPlayerTrainingData(activeTrainingPlayerId);
+    const elHeroPts = document.getElementById('thHeroPoints');
+    if (elHeroPts) elHeroPts.textContent = `${curPData.points} TP`;
+  }
+}
+
 function getUnlockedCardsList() {
   const ownedIds = Object.keys(save.collection).filter(id => save.collection[id] > 0);
   return PLAYERS_DB.filter(p => ownedIds.includes(p.id));
 }
 
 function calcMyClubBaseRating() {
-  const squad = save.myClubSquad || [];
-  const players = squad.map(id => id ? PLAYERS_DB.find(p => p.id === id) : null).filter(Boolean);
-  if (!players.length) return 0;
-  const sum = players.reduce((acc, p) => acc + p.rating, 0);
+  const squad = (myClubSquad && myClubSquad.length === 11 && myClubSquad[0])
+    ? myClubSquad
+    : (save.myClubSquad || []).map(id => id ? PLAYERS_DB.find(p => p.id === id) : null).filter(Boolean);
+  const players = squad.filter(Boolean);
+  if (!players.length) return 75;
+  const sum = players.reduce((acc, p) => acc + getPlayerEffectiveRating(p), 0);
   return Math.round(sum / 11);
 }
 
 function calcMyClubTotalRating() {
   const base = calcMyClubBaseRating();
-  if (base === 0) return 0;
+  if (base === 0) return 75;
   const mastery = getClubMasteryData(save.myClubMatchesTogether || 0);
-  const hasCaptain = save.myClubRoles && save.myClubRoles.captain && (save.myClubSquad || []).includes(save.myClubRoles.captain);
+  const squad = (myClubSquad && myClubSquad.length === 11 && myClubSquad[0])
+    ? myClubSquad.map(p => p ? p.id : null)
+    : (save.myClubSquad || []);
+  const hasCaptain = save.myClubRoles && save.myClubRoles.captain && squad.includes(save.myClubRoles.captain);
   const captainBonus = hasCaptain ? 3 : 0;
   return base + mastery.bonus + captainBonus;
 }
 
 let activeCardAction = null; // { slotIndex, type: 'starter'|'bench', playerId }
 let activeTrainingPlayerId = null;
+let userCards = [];
+let myClubSquad = [];
+let myClubSubs = [];
 
-function renderMyClubField() {
-  const pitch = document.getElementById('myClubPitch');
-  if (pitch) {
-    pitch.innerHTML = '';
-    const squad = save.myClubSquad || [];
-
-    MY_CLUB_ROWS.forEach(rowSlots => {
-      const rowEl = document.createElement('div');
-      rowEl.className = 'myclub-row';
-
-      rowSlots.forEach(idx => {
-        const slotDef = MY_CLUB_SLOTS_DEF[idx];
-        const playerId = squad[idx];
-        const player = playerId ? PLAYERS_DB.find(p => p.id === playerId) : null;
-
-        const slotEl = document.createElement('div');
-        slotEl.className = 'myclub-slot' + (player ? '' : ' empty');
-        slotEl.title = `${slotDef.pos} (${slotDef.label})`;
-
-        if (player) {
-          const img = makeCardImg(player, 'myclub-slot__img');
-          slotEl.appendChild(img);
-        } else {
-          const plus = document.createElement('div');
-          plus.className = 'myclub-slot__plus';
-          plus.textContent = '+';
-          const pos = document.createElement('div');
-          pos.className = 'myclub-slot__pos';
-          pos.textContent = slotDef.label;
-          slotEl.appendChild(plus);
-          slotEl.appendChild(pos);
-        }
-
-        slotEl.addEventListener('click', () => {
-          if (player) {
-            openCardActionMenu(idx, 'starter', player.id);
-          } else {
-            openMyClubPicker(idx);
-          }
-        });
-
-        rowEl.appendChild(slotEl);
-      });
-
-      pitch.appendChild(rowEl);
+function syncUserCards() {
+  userCards = Object.keys(save.collection || {}).filter(id => save.collection[id] > 0);
+  if (userCards.length < 11) {
+    const starterPool = PLAYERS_DB.filter(p => p.personId !== 'komilzhonov' && p.rating <= 80).slice(0, 14);
+    starterPool.forEach(p => {
+      if (!save.collection) save.collection = {};
+      save.collection[p.id] = (save.collection[p.id] || 0) + 1;
     });
+    writeSave();
+    userCards = Object.keys(save.collection || {}).filter(id => save.collection[id] > 0);
+  }
+  return userCards;
+}
+
+function getValidMyClubSquad() {
+  syncUserCards();
+  const unlocked = PLAYERS_DB.filter(p => userCards.includes(p.id) || (save.collection && save.collection[p.id] > 0));
+  let squad = [];
+  try {
+    const raw = localStorage.getItem('myClubSquad');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length === 11) {
+        squad = parsed.map(item => {
+          const id = typeof item === 'string' ? item : (item ? item.id : null);
+          return PLAYERS_DB.find(p => p.id === id);
+        }).filter(Boolean);
+      }
+    }
+  } catch (e) {
+    console.warn("Ошибка чтения squad:", e);
   }
 
-  // Render 3 Bench Slots
-  const benchEl = document.getElementById('myClubBench');
-  if (benchEl) {
-    benchEl.innerHTML = '';
-    if (!Array.isArray(save.myClubBench)) save.myClubBench = [null, null, null];
+  // Deduplicate and ensure exactly 11 unique players
+  squad = squad.filter((p, idx, self) => self.findIndex(s => s.id === p.id) === idx);
 
-    for (let bIdx = 0; bIdx < 3; bIdx++) {
-      const bPlayerId = save.myClubBench[bIdx];
-      const bPlayer = bPlayerId ? PLAYERS_DB.find(p => p.id === bPlayerId) : null;
+  if (squad.length < 11) {
+    const sorted = [...unlocked].sort((a, b) => b.rating - a.rating);
+    const gk = sorted.find(p => p.position === 'GK');
+    const outfield = sorted.filter(p => !gk || p.id !== gk.id);
+    const chosen = outfield.slice(0, 10);
+    if (gk) {
+      chosen.push(gk);
+    } else if (outfield[10]) {
+      chosen.push(outfield[10]);
+    }
+    squad = chosen;
+    for (const p of sorted) {
+      if (squad.length >= 11) break;
+      if (!squad.some(s => s.id === p.id)) squad.push(p);
+    }
+    localStorage.setItem('myClubSquad', JSON.stringify(squad.map(p => p.id)));
+  }
+
+  save.myClubSquad = squad.map(p => p ? p.id : null);
+  writeSave();
+  myClubSquad = squad;
+  return squad;
+}
+
+function getValidSubstitutes() {
+  syncUserCards();
+  const squadIds = (myClubSquad || []).map(p => p && p.id ? p.id : p).filter(Boolean);
+  const available = PLAYERS_DB.filter(p => (userCards.includes(p.id) || (save.collection && save.collection[p.id] > 0)) && !squadIds.includes(p.id));
+  let subs = [];
+  try {
+    const raw = localStorage.getItem('myClubSubs');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        subs = parsed.map(id => PLAYERS_DB.find(p => p.id === (typeof id === 'string' ? id : (id ? id.id : null)))).filter(Boolean);
+      }
+    }
+  } catch (e) {}
+
+  subs = subs.filter((p, idx, self) => self.findIndex(s => s.id === p.id) === idx && !squadIds.includes(p.id));
+  for (const p of available) {
+    if (subs.length >= 3) break;
+    if (!subs.some(s => s.id === p.id)) subs.push(p);
+  }
+
+  if (subs.length < 3) {
+    const fallbackPool = PLAYERS_DB.filter(p => p.personId !== 'komilzhonov' && !squadIds.includes(p.id) && !subs.some(s => s.id === p.id));
+    for (const p of fallbackPool) {
+      if (subs.length >= 3) break;
+      subs.push(p);
+      if (!save.collection[p.id]) save.collection[p.id] = 1;
+    }
+    writeSave();
+    syncUserCards();
+  }
+
+  localStorage.setItem('myClubSubs', JSON.stringify(subs.map(p => p.id)));
+  save.myClubBench = subs.map(p => p.id);
+  myClubSubs = subs;
+  return subs;
+}
+
+function ensureValidSquad() {
+  return getValidMyClubSquad();
+}
+
+function renderMyClubPitch() {
+  const pitch = document.getElementById('myClubPitch');
+  if (!pitch) return;
+  myClubSquad = getValidMyClubSquad();
+  pitch.innerHTML = '';
+
+  const currentFormation = localStorage.getItem('myClubFormation') || save.myClubFormation || '4-2-3-1';
+  const structure = FORMATIONS[currentFormation] || [1, 3, 2, 4, 1];
+
+  let cardIndex = 0;
+  structure.forEach(count => {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'pitch-line-row';
+    rowEl.style.cssText = 'display: flex; justify-content: space-around; align-items: center; width: 100%; margin: 2px 0;';
+
+    for (let c = 0; c < count; c++) {
+      const idx = cardIndex;
+      cardIndex++;
+      const player = myClubSquad[idx];
 
       const slot = document.createElement('div');
-      slot.className = 'bench-slot' + (bPlayer ? ' filled' : '');
+      slot.className = 'pitch-card-slot';
+      slot.style.cssText = 'display: flex; flex-direction: column; align-items: center; cursor: pointer;';
 
-      if (bPlayer) {
-        const img = makeCardImg(bPlayer, 'bench-slot__img');
-        slot.appendChild(img);
-        slot.title = `Запасной: ${bPlayer.name} (${bPlayer.position})`;
+      if (player && player.image) {
+        slot.innerHTML = `<img class="pitch-card-img" src="${player.image}" alt="${player.name}" style="width: clamp(56px, 17vw, 76px); aspect-ratio: 2/3; object-fit: contain; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.65)); pointer-events: auto;">`;
       } else {
-        const plus = document.createElement('div');
-        plus.className = 'bench-slot__plus';
-        plus.textContent = '+';
-        const pos = document.createElement('div');
-        pos.className = 'bench-slot__pos';
-        pos.textContent = `SUB ${bIdx + 1}`;
-        slot.appendChild(plus);
-        slot.appendChild(pos);
+        slot.innerHTML = `<img class="pitch-card-img" src="pers/Vibor/Выбор.png" style="width: clamp(56px, 17vw, 76px); aspect-ratio: 2/3; object-fit: contain; opacity: 0.5;">`;
       }
 
-      slot.addEventListener('click', () => {
-        if (bPlayer) {
-          openCardActionMenu(bIdx, 'bench', bPlayer.id);
-        } else {
-          openMyClubBenchPicker(bIdx);
-        }
-      });
+      slot.onclick = () => openSquadSwapModal(idx, 'pitch');
 
-      benchEl.appendChild(slot);
+      rowEl.appendChild(slot);
     }
-  }
 
-  // Update Team Roles UI
-  const capPlayer = save.myClubRoles.captain ? PLAYERS_DB.find(p => p.id === save.myClubRoles.captain) : null;
-  const penPlayer = save.myClubRoles.penalty ? PLAYERS_DB.find(p => p.id === save.myClubRoles.penalty) : null;
-  const setPlayer = save.myClubRoles.setPieces ? PLAYERS_DB.find(p => p.id === save.myClubRoles.setPieces) : null;
+    pitch.appendChild(rowEl);
+  });
+
+  renderSubstitutes();
+  updateClubOVR();
+}
+
+function renderSubstitutes() {
+  const subsEl = document.getElementById('myClubBench') || document.getElementById('myClubSubs');
+  if (!subsEl) return;
+  subsEl.innerHTML = '';
+  myClubSubs = getValidSubstitutes();
+
+  myClubSubs.forEach((player, bIdx) => {
+    const slot = document.createElement('div');
+    slot.className = 'pitch-card-slot bench-slot' + (player ? ' filled' : '');
+    slot.style.cssText = 'display: flex; flex-direction: column; align-items: center; cursor: pointer;';
+
+    if (player && player.image) {
+      slot.innerHTML = `<img class="pitch-card-img" src="${player.image}" alt="${player.name}" style="width: clamp(54px, 16vw, 72px); aspect-ratio: 2/3; object-fit: contain; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.65)); pointer-events: auto;">`;
+      slot.title = `Запасной: ${player.name} (${player.position})`;
+    } else {
+      slot.innerHTML = `<img class="pitch-card-img" src="pers/Vibor/Выбор.png" style="width: clamp(54px, 16vw, 72px); aspect-ratio: 2/3; object-fit: contain; opacity: 0.5;">`;
+    }
+
+    slot.onclick = () => openSquadSwapModal(bIdx, 'sub');
+
+    subsEl.appendChild(slot);
+  });
+}
+
+function updateClubOVR() {
+  const capPlayer = save.myClubRoles && save.myClubRoles.captain ? PLAYERS_DB.find(p => p.id === save.myClubRoles.captain) : null;
+  const penPlayer = save.myClubRoles && save.myClubRoles.penalty ? PLAYERS_DB.find(p => p.id === save.myClubRoles.penalty) : null;
+  const setPlayer = save.myClubRoles && save.myClubRoles.setPieces ? PLAYERS_DB.find(p => p.id === save.myClubRoles.setPieces) : null;
 
   const elCap = document.getElementById('rolePlayerCaptain');
   const elPen = document.getElementById('rolePlayerPenalty');
@@ -1981,7 +2453,7 @@ function renderMyClubField() {
   if (elPen) elPen.textContent = penPlayer ? penPlayer.name : 'Не назначен';
   if (elSet) elSet.textContent = setPlayer ? setPlayer.name : 'Не назначен';
 
-  const squadFilled = (save.myClubSquad || []).filter(Boolean).length;
+  const squadFilled = (myClubSquad || []).filter(Boolean).length;
   const baseOvr = calcMyClubBaseRating();
   const mastery = getClubMasteryData(save.myClubMatchesTogether || 0);
   const totalOvr = calcMyClubTotalRating();
@@ -1999,7 +2471,12 @@ function renderMyClubField() {
   const myClubCount = document.getElementById('myClubCount');
   if (myClubCount) myClubCount.textContent = `${squadFilled}/11`;
 
-  // Update Mastery Card UI
+  // Update Formation Label
+  const fLabel = document.getElementById('myClubFormationLabel');
+  if (fLabel) fLabel.textContent = localStorage.getItem('myClubFormation') || save.myClubFormation || '4-2-3-1';
+
+  // Update Training Hub Badge & Mastery Card UI
+  updateTrainingHubBadge();
   const mTitle = document.getElementById('myClubMasteryTitle');
   const mSub = document.getElementById('myClubMasterySub');
   const mBonus = document.getElementById('myClubMasteryBonus');
@@ -2008,132 +2485,125 @@ function renderMyClubField() {
   if (mBonus) mBonus.textContent = mastery.bonusText;
 }
 
+function updateClubStatsHeader() {
+  updateClubOVR();
+}
+
+// Aliases for backwards compatibility
+function renderMyClubField() {
+  renderMyClubPitch();
+}
+function renderMyClubBench() {
+  renderSubstitutes();
+}
+function updateMyClubUI() {
+  updateClubOVR();
+}
+
+function openFormationPickerMC() {
+  const modal = document.getElementById('modalFormationMC');
+  const list = document.getElementById('formationMCList');
+  if (!modal || !list) return;
+
+  list.innerHTML = '';
+  const currentKey = localStorage.getItem('myClubFormation') || save.myClubFormation || '4-2-3-1';
+
+  Object.keys(FORMATIONS).forEach(key => {
+    const f = MY_CLUB_FORMATIONS[key] || { name: key, desc: 'Тактическая схема' };
+    const isCur = key === currentKey;
+    const card = document.createElement('div');
+    card.className = 'formation-mc-card' + (isCur ? ' active' : '');
+    card.innerHTML = `
+      <div class="fmc-left">
+        <div class="fmc-name">${f.name || key}</div>
+        <div class="fmc-desc">${f.desc || ''}</div>
+      </div>
+      <div class="fmc-badge">${isCur ? '✓ АКТИВНА' : 'ВЫБРАТЬ'}</div>
+    `;
+
+    card.addEventListener('click', () => {
+      save.myClubFormation = key;
+      localStorage.setItem('myClubFormation', key);
+      writeSave();
+      modal.classList.add('hidden');
+      renderMyClubPitch();
+      updateClubStatsHeader();
+      showToast(`Схема изменена на ${f.name || key}!`);
+    });
+
+    list.appendChild(card);
+  });
+
+  modal.classList.remove('hidden');
+}
+
 function openMyClubScreen() {
-  const squad = save.myClubSquad || [];
-  const filledCount = squad.filter(Boolean).length;
-  if (filledCount === 0) {
-    autoBuildMyClubSquad(false);
-  }
-  renderMyClubField();
+  myClubSquad = getValidMyClubSquad();
+  renderMyClubPitch();
   showScreen('screenMyClub');
 }
 
-function autoBuildMyClubSquad(notify = true) {
-  const unlocked = getUnlockedCardsList();
-  if (!unlocked.length) return;
-
-  const sorted = [...unlocked].sort((a, b) => b.rating - a.rating);
-  const used = new Set();
-  const newSquad = new Array(11).fill(null);
-
-  function pickMatch(pred) {
-    for (let i = 0; i < sorted.length; i++) {
-      const p = sorted[i];
-      if (!used.has(p.id) && pred(p)) {
-        used.add(p.id);
-        return p;
-      }
-    }
-    return null;
-  }
-
-  // 1. GK
-  const gk = pickMatch(p => p.position === 'GK') || pickMatch(() => true);
-  if (gk) newSquad[0] = gk.id;
-
-  // 2. DEF (1-4)
-  const defIndices = [1, 2, 3, 4];
-  defIndices.forEach(idx => {
-    const pos = MY_CLUB_SLOTS_DEF[idx].pos;
-    const p = pickMatch(pl => pl.position === pos) ||
-              pickMatch(pl => ['LB', 'CB', 'RB', 'LWB', 'RWB'].includes(pl.position)) ||
-              pickMatch(() => true);
-    if (p) newSquad[idx] = p.id;
-  });
-
-  // 3. MID (5-7)
-  const midIndices = [5, 6, 7];
-  midIndices.forEach(idx => {
-    const pos = MY_CLUB_SLOTS_DEF[idx].pos;
-    const p = pickMatch(pl => pl.position === pos) ||
-              pickMatch(pl => ['CDM', 'CM', 'CAM', 'LM', 'RM'].includes(pl.position)) ||
-              pickMatch(() => true);
-    if (p) newSquad[idx] = p.id;
-  });
-
-  // 4. ATT (8-10)
-  const attIndices = [8, 9, 10];
-  attIndices.forEach(idx => {
-    const pos = MY_CLUB_SLOTS_DEF[idx].pos;
-    const p = pickMatch(pl => pl.position === pos) ||
-              pickMatch(pl => ['ST', 'CF', 'LW', 'RW'].includes(pl.position)) ||
-              pickMatch(() => true);
-    if (p) newSquad[idx] = p.id;
-  });
-
-  // Fill gaps
-  for (let i = 0; i < 11; i++) {
-    if (!newSquad[i]) {
-      const fallback = pickMatch(() => true);
-      if (fallback) newSquad[i] = fallback.id;
-    }
-  }
-
-  // Auto-fill bench with next top available players
-  if (!Array.isArray(save.myClubBench)) save.myClubBench = [null, null, null];
-  for (let b = 0; b < 3; b++) {
-    if (!save.myClubBench[b] || newSquad.includes(save.myClubBench[b])) {
-      const sub = pickMatch(() => true);
-      if (sub) save.myClubBench[b] = sub.id;
-    }
-  }
-
-  // Auto-assign captain if none
-  if (!save.myClubRoles.captain && newSquad[0]) {
-    const best = newSquad.map(id => PLAYERS_DB.find(p => p.id === id)).filter(Boolean).sort((a,b) => b.rating - a.rating)[0];
-    if (best) save.myClubRoles.captain = best.id;
-  }
-
-  save.myClubSquad = newSquad;
-  writeSave();
-  renderMyClubField();
-  if (notify) {
-    showToast('⚡ Автосостав и скамья успешно собраны!');
-  }
+function handleAutoSquadClick() {
+  try {
+    localStorage.removeItem('myClubSquad');
+    localStorage.removeItem('myClubSubs');
+  } catch(e) {}
+  myClubSquad = getValidMyClubSquad();
+  renderMyClubPitch();
+  showToast(`⚡ Автосостав собран! OVR команды: ${calcMyClubTotalRating()}`);
 }
 
-function openMyClubPicker(slotIndex) {
-  activeMyClubSlot = slotIndex;
-  const slotDef = MY_CLUB_SLOTS_DEF[slotIndex];
+function autoBuildMyClubSquad(notify = true) {
+  handleAutoSquadClick();
+}
+
+function openSquadSwapModal(slotIndex, type) {
   const modal = document.getElementById('modalMyClubPicker');
   const title = document.getElementById('myClubPickerTitle');
   const grid = document.getElementById('myClubPickerGrid');
   if (!modal || !grid) return;
 
-  if (title) title.textContent = `ВЫБЕРИ ИГРОКА (${slotDef.label} / ${slotDef.pos})`;
+  syncUserCards();
+  const unlocked = PLAYERS_DB.filter(p => userCards.includes(p.id) || (save.collection && save.collection[p.id] > 0));
+
+  if (title) {
+    title.textContent = (type === 'pitch')
+      ? `ВЫБОР ИГРОКА (ПОЗИЦИЯ ${slotIndex + 1})`
+      : `ВЫБОР ЗАПАСНОГО (SUB ${slotIndex + 1})`;
+  }
+
   grid.innerHTML = '';
   grid.scrollTop = 0;
 
-  const unlocked = getUnlockedCardsList();
   if (!unlocked.length) {
     grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:24px;color:var(--silver);">Нет доступных карт</div>';
     modal.classList.remove('hidden');
     return;
   }
 
-  const line = slotDef.line;
-  const sorted = [...unlocked].sort((a, b) => {
-    let scoreA = a.rating + (a.position === slotDef.pos ? 1000 : (posToLine(a.position) === line ? 400 : 0));
-    let scoreB = b.rating + (b.position === slotDef.pos ? 1000 : (posToLine(b.position) === line ? 400 : 0));
-    return scoreB - scoreA;
-  });
+  const currentSlotPlayer = (type === 'pitch') ? (myClubSquad[slotIndex] || null) : (myClubSubs[slotIndex] || null);
+  const currentSlotId = currentSlotPlayer ? currentSlotPlayer.id : null;
+
+  const pitchIds = (myClubSquad || []).map(p => p ? (p.id || p) : null);
+  const subIds = (myClubSubs || []).map(p => p ? (p.id || p) : null);
+
+  const sorted = [...unlocked].sort((a, b) => b.rating - a.rating);
 
   let selecting = false;
   sorted.forEach(player => {
     const card = document.createElement('div');
     card.className = 'picker-card';
-    const isCurrent = (save.myClubSquad || [])[slotIndex] === player.id;
-    if (isCurrent) card.style.borderColor = 'var(--gold)';
+    const isThisSlot = (player.id === currentSlotId);
+    const inPitch = pitchIds.includes(player.id);
+    const inSubs = subIds.includes(player.id);
+
+    if (isThisSlot) {
+      card.style.borderColor = 'var(--gold)';
+    } else if (inPitch) {
+      card.style.borderColor = 'rgba(0,255,136,0.7)';
+    } else if (inSubs) {
+      card.style.borderColor = 'rgba(0,229,255,0.7)';
+    }
 
     const img = makeCardImg(player, '');
     card.appendChild(img);
@@ -2144,18 +2614,51 @@ function openMyClubPicker(slotIndex) {
       card.classList.add('selected');
 
       setTimeout(() => {
-        const squad = [...(save.myClubSquad || new Array(11).fill(null))];
-        const existingIdx = squad.indexOf(player.id);
-        if (existingIdx !== -1 && existingIdx !== slotIndex) {
-          squad[existingIdx] = squad[slotIndex];
+        if (!Array.isArray(myClubSquad) || myClubSquad.length !== 11) {
+          myClubSquad = getValidMyClubSquad();
         }
-        squad[slotIndex] = player.id;
-        save.myClubSquad = squad;
+        if (!Array.isArray(myClubSubs) || myClubSubs.length !== 3) {
+          myClubSubs = getValidSubstitutes();
+        }
+
+        const oldPlayer = (type === 'pitch') ? myClubSquad[slotIndex] : myClubSubs[slotIndex];
+
+        if (type === 'pitch') {
+          const existingSquadIdx = myClubSquad.findIndex(p => p && p.id === player.id);
+          const existingSubIdx = myClubSubs.findIndex(p => p && p.id === player.id);
+
+          if (existingSquadIdx !== -1 && existingSquadIdx !== slotIndex) {
+            myClubSquad[existingSquadIdx] = oldPlayer;
+          }
+          if (existingSubIdx !== -1) {
+            myClubSubs[existingSubIdx] = oldPlayer;
+          }
+          myClubSquad[slotIndex] = player;
+        } else {
+          const existingSubIdx = myClubSubs.findIndex(p => p && p.id === player.id);
+          const existingSquadIdx = myClubSquad.findIndex(p => p && p.id === player.id);
+
+          if (existingSubIdx !== -1 && existingSubIdx !== slotIndex) {
+            myClubSubs[existingSubIdx] = oldPlayer;
+          }
+          if (existingSquadIdx !== -1) {
+            myClubSquad[existingSquadIdx] = oldPlayer;
+          }
+          myClubSubs[slotIndex] = player;
+        }
+
+        localStorage.setItem('myClubSquad', JSON.stringify(myClubSquad.map(p => p ? p.id : null)));
+        localStorage.setItem('myClubSubs', JSON.stringify(myClubSubs.map(p => p ? p.id : null)));
+        save.myClubSquad = myClubSquad.map(p => p ? p.id : null);
+        save.myClubBench = myClubSubs.map(p => p ? p.id : null);
         writeSave();
 
         modal.classList.add('hidden');
-        renderMyClubField();
-      }, 130);
+        renderMyClubPitch();
+        renderSubstitutes();
+        updateClubOVR();
+        showToast(`Игрок ${player.name} добавлен!`);
+      }, 120);
     });
 
     grid.appendChild(card);
@@ -2164,58 +2667,12 @@ function openMyClubPicker(slotIndex) {
   modal.classList.remove('hidden');
 }
 
+function openMyClubPicker(slotIndex) {
+  openSquadSwapModal(slotIndex, 'pitch');
+}
+
 function openMyClubBenchPicker(benchIdx) {
-  const modal = document.getElementById('modalMyClubPicker');
-  const title = document.getElementById('myClubPickerTitle');
-  const grid = document.getElementById('myClubPickerGrid');
-  if (!modal || !grid) return;
-
-  if (title) title.textContent = `ВЫБЕРИ ЗАПАСНОГО (SUB ${benchIdx + 1})`;
-  grid.innerHTML = '';
-  grid.scrollTop = 0;
-
-  const unlocked = getUnlockedCardsList();
-  const currentPitchIds = save.myClubSquad || [];
-  const currentBenchIds = save.myClubBench || [];
-
-  // Exclude players already on pitch or in other bench slots
-  const candidates = unlocked.filter(p => !currentPitchIds.includes(p.id) && (!currentBenchIds.includes(p.id) || currentBenchIds[benchIdx] === p.id));
-
-  if (!candidates.length) {
-    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:24px;color:var(--silver);">Нет свободных карт для скамьи</div>';
-    modal.classList.remove('hidden');
-    return;
-  }
-
-  const sorted = [...candidates].sort((a, b) => b.rating - a.rating);
-  let selecting = false;
-
-  sorted.forEach(player => {
-    const card = document.createElement('div');
-    card.className = 'picker-card';
-    if (currentBenchIds[benchIdx] === player.id) card.style.borderColor = 'var(--cyan)';
-
-    const img = makeCardImg(player, '');
-    card.appendChild(img);
-
-    card.addEventListener('click', () => {
-      if (selecting) return;
-      selecting = true;
-      card.classList.add('selected');
-
-      setTimeout(() => {
-        if (!Array.isArray(save.myClubBench)) save.myClubBench = [null, null, null];
-        save.myClubBench[benchIdx] = player.id;
-        writeSave();
-        modal.classList.add('hidden');
-        renderMyClubField();
-      }, 130);
-    });
-
-    grid.appendChild(card);
-  });
-
-  modal.classList.remove('hidden');
+  openSquadSwapModal(benchIdx, 'sub');
 }
 
 function openCardActionMenu(slotIndex, type, playerId) {
@@ -2240,48 +2697,337 @@ function openCardActionMenu(slotIndex, type, playerId) {
   modal.classList.remove('hidden');
 }
 
-function openTrainingCampModal(playerId) {
-  activeTrainingPlayerId = playerId;
-  const player = PLAYERS_DB.find(p => p.id === playerId);
-  if (!player) return;
+const OUTFIELD_SKILLS = [
+  { key: 'pac', name: 'СКОРОСТЬ (PAC)', icon: '⚡', desc: 'Ускорение и рывки на 2D-радаре' },
+  { key: 'sho', name: 'УДАР (SHO)', icon: '🎯', desc: 'Сила и точность ударов, реализация' },
+  { key: 'pas', name: 'ПАС (PAS)', icon: '👟', desc: 'Культура паса, меньше перехватов' },
+  { key: 'def', name: 'ЗАЩИТА (DEF)', icon: '🛡️', desc: 'Чистые отборы мяча и перехваты' },
+  { key: 'phy', name: 'ФИЗИКА (PHY)', icon: '💪', desc: 'Единоборства и выносливость' }
+];
 
-  if (!save.playerUpgrades) save.playerUpgrades = {};
-  if (!save.playerUpgrades[playerId]) {
-    save.playerUpgrades[playerId] = { xp: 0, sp: 0, pac: 0, sho: 0, pas: 0, def: 0, ref: 0 };
+const GK_SKILLS = [
+  { key: 'div', name: 'НЫРКИ (DIV)', icon: '🧤', desc: 'Прыжки за сложными мячами в углы' },
+  { key: 'han', name: 'ИГРА РУКАМИ (HAN)', icon: '✋', desc: 'Надежная фиксация без отскоков' },
+  { key: 'kic', name: 'ВВОД В ИГРУ (KIC)', icon: '🦵', desc: 'Дальние точные передачи в атаку' },
+  { key: 'ref', name: 'РЕАКЦИЯ (REF)', icon: '⚡', desc: 'Спасение ворот при ударах в упор' },
+  { key: 'pos', name: 'ПОЗИЦИЯ (POS)', icon: '📍', desc: 'Выбор позиции и чтение игры' }
+];
+
+const MAX_SKILL_UPGRADE = 25;
+
+const SKILL_PERKS = {
+  pac: {
+    10: { name: 'Взрывной рывок', desc: 'Молниеносный старт при ускорении' },
+    20: { name: 'Сверхзвуковой отрыв', desc: 'Максимальная скорость спринта' }
+  },
+  sho: {
+    10: { name: 'Пушечный выстрел', desc: 'Убойная сила удара из любых позиций' },
+    20: { name: 'Лазерная точность', desc: 'Снайперское попадание в углы ворот' }
+  },
+  pas: {
+    10: { name: 'Точный навес', desc: 'Выверенные подачи в свободные зоны' },
+    20: { name: 'Разрезное видение', desc: 'Гениальные сквозные передачи' }
+  },
+  def: {
+    10: { name: 'Железный подкат', desc: 'Безошибочный чистый отбор мяча' },
+    20: { name: 'Непроходимая стена', desc: 'Блокировка любых попыток дриблинга' }
+  },
+  phy: {
+    10: { name: 'Стальной корпус', desc: 'Победа в любых силовых единоборствах' },
+    20: { name: 'Бесконечный прессинг', desc: 'Выносливость на все 90 минут матча' }
+  },
+  div: {
+    10: { name: 'Кошачий прыжок', desc: 'Сейвы в нижних углах ворот' },
+    20: { name: 'Воздушный сейв', desc: 'Снятие мяча из верхних девяток' }
+  },
+  han: {
+    10: { name: 'Надежный замок', desc: 'Мертвая фиксация мяча в перчатках' },
+    20: { name: 'Стальная хватка', desc: 'Полное отсутствие опасных отскоков' }
+  },
+  kic: {
+    10: { name: 'Быстрый ввод', desc: 'Моментальный разгон контратак' },
+    20: { name: 'Контратакующий пас', desc: 'Идеальные дальние выносы в ноги' }
+  },
+  ref: {
+    10: { name: 'Молниеносный рефлекс', desc: 'Реакция на удары в упор' },
+    20: { name: 'Инстинкт паука', desc: 'Невероятные чудеса на ленточке ворот' }
+  },
+  pos: {
+    10: { name: 'Чтение игры', desc: 'Предугадывание направления удара' },
+    20: { name: 'Хозяин штрафной', desc: 'Тотальный контроль вратарской зоны' }
   }
-  const up = save.playerUpgrades[playerId];
+};
 
-  const modal = document.getElementById('modalTrainingCamp');
-  const wrap = document.getElementById('trainingCardWrap');
-  const nameEl = document.getElementById('trainingPlayerName');
-  const posEl = document.getElementById('trainingPlayerPos');
-  const xpText = document.getElementById('trainingXpText');
-  const xpFill = document.getElementById('trainingXpFill');
-  const spCount = document.getElementById('trainingSpCount');
+function getSkillPerkHtml(key, currentVal) {
+  const perks = SKILL_PERKS[key];
+  if (!perks) return '';
+  const perk10 = perks[10];
+  const perk20 = perks[20];
+  const has10 = currentVal >= 10;
+  const has20 = currentVal >= 20;
 
+  return `
+    <div class="th-sc-perks-row">
+      <span class="th-sc-perk ${has10 ? 'active' : 'locked'}" title="${perk10.desc}">
+        ${has10 ? '✨' : '🔒'} +10: ${perk10.name}
+      </span>
+      <span class="th-sc-perk ${has20 ? 'active' : 'locked'}" title="${perk20.desc}">
+        ${has20 ? '⭐' : '🔒'} +20: ${perk20.name}
+      </span>
+    </div>
+  `;
+}
+
+let thActiveTab = 'starters'; // 'starters' | 'reserve'
+
+function openTrainingHubModal(targetPlayerId) {
+  const modal = document.getElementById('modalTrainingHub') || document.getElementById('modalTrainingCamp');
   if (!modal) return;
 
-  if (wrap) {
-    wrap.innerHTML = '';
-    wrap.appendChild(makeCardImg(player, ''));
+  const starters = getValidMyClubSquad();
+  const unlocked = getUnlockedCardsList();
+  const starterIds = starters.map(s => s ? s.id : null).filter(Boolean);
+  const reserve = unlocked.filter(p => !starterIds.includes(p.id));
+
+  // Determine active player
+  if (!targetPlayerId) {
+    if (activeTrainingPlayerId) {
+      targetPlayerId = activeTrainingPlayerId;
+    } else {
+      targetPlayerId = starters[0] ? starters[0].id : (unlocked[0] ? unlocked[0].id : 'komilzhonov_120');
+    }
   }
-  if (nameEl) nameEl.textContent = player.name;
-  if (posEl) posEl.innerHTML = `${player.position} • ${player.rating} OVR • ${getCountryFlag(player.country)} ${player.country}`;
+  activeTrainingPlayerId = targetPlayerId;
 
-  const currentXp = (up.xp || 0) % 100;
-  if (xpText) xpText.textContent = `${currentXp} / 100 XP`;
-  if (xpFill) xpFill.style.width = `${currentXp}%`;
-  if (spCount) spCount.textContent = up.sp || 0;
+  const player = PLAYERS_DB.find(p => p.id === targetPlayerId) || starters[0] || unlocked[0] || PLAYERS_DB[0];
+  if (!player) return;
 
-  // Skill values
-  ['pac', 'sho', 'pas', 'def', 'ref'].forEach(k => {
-    const valEl = document.getElementById(`skillVal${k.charAt(0).toUpperCase() + k.slice(1)}`);
-    if (valEl) valEl.textContent = `+${up[k] || 0}`;
-    const btn = modal.querySelector(`.btn-skill-plus[data-skill="${k}"]`);
-    if (btn) btn.disabled = (up.sp || 0) <= 0;
-  });
+  // If selected player is in reserve, set active tab to reserve; if in starters, set to starters
+  if (starters.some(s => s && s.id === player.id)) {
+    thActiveTab = 'starters';
+  } else if (reserve.some(r => r && r.id === player.id)) {
+    thActiveTab = 'reserve';
+  }
 
+  const pData = getPlayerTrainingData(player.id, player.position);
+
+  // 1. Setup Tabs
+  const tabStarters = document.getElementById('thTabStarters');
+  const tabReserve = document.getElementById('thTabReserve');
+  const reserveCountEl = document.getElementById('thReserveCount');
+  if (reserveCountEl) reserveCountEl.textContent = reserve.length;
+
+  if (tabStarters) {
+    tabStarters.className = 'th-tab-btn' + (thActiveTab === 'starters' ? ' active' : '');
+    tabStarters.onclick = () => {
+      thActiveTab = 'starters';
+      renderPlayerCarousel();
+    };
+  }
+  if (tabReserve) {
+    tabReserve.className = 'th-tab-btn' + (thActiveTab === 'reserve' ? ' active' : '');
+    tabReserve.onclick = () => {
+      thActiveTab = 'reserve';
+      renderPlayerCarousel();
+    };
+  }
+
+// Utility for short player surname
+function getShortLastName(fullName) {
+  if (!fullName) return '';
+  const clean = fullName.trim();
+  const parts = clean.split(/\s+/);
+  if (parts.length === 1) return parts[0];
+  const upper = clean.toUpperCase();
+  if (upper.startsWith('ДЕ ') || upper.startsWith('ВАН ') || upper.startsWith('ФОН ') || upper.startsWith('ЛА ') || upper.startsWith('ЭЛЬ ')) {
+    return clean;
+  }
+  return parts[parts.length - 1];
+}
+
+  // 2. Render Player Carousel Selector
+  function renderPlayerCarousel() {
+    if (tabStarters) tabStarters.className = 'th-tab-btn' + (thActiveTab === 'starters' ? ' active' : '');
+    if (tabReserve) tabReserve.className = 'th-tab-btn' + (thActiveTab === 'reserve' ? ' active' : '');
+
+    const scrollEl = document.getElementById('thStartersScroll');
+    if (!scrollEl) return;
+    scrollEl.innerHTML = '';
+
+    const list = thActiveTab === 'starters' ? starters : reserve;
+    if (!list.length) {
+      scrollEl.innerHTML = '<div style="color:var(--silver);font-size:0.75rem;padding:12px;text-align:center;width:100%;">В этой категории пока нет игроков.</div>';
+      return;
+    }
+
+    list.forEach(p => {
+      if (!p) return;
+      const isCur = p.id === activeTrainingPlayerId;
+      const isStarter = starterIds.includes(p.id);
+      const curData = getPlayerTrainingData(p.id, p.position);
+      const bonusOvr = getPlayerBonusOvr(p.id);
+      const totalOvr = (p.rating || 75) + bonusOvr;
+      const shortLastName = getShortLastName(p.name);
+
+      const chip = document.createElement('div');
+      chip.className = 'th-player-chip' + (isStarter ? ' starter' : '') + (isCur ? ' active' : '');
+      chip.innerHTML = `
+        <div class="th-chip-header">
+          <span class="th-chip-pos">${p.position}</span>
+          ${isStarter ? '<span class="th-chip-star" title="Основной состав">⭐</span>' : ''}
+        </div>
+        <span class="th-chip-name" title="${p.name}">${shortLastName}</span>
+        <span class="th-chip-tp">⚡ ${curData.points} TP</span>
+      `;
+      chip.addEventListener('click', () => {
+        openTrainingHubModal(p.id);
+      });
+      scrollEl.appendChild(chip);
+
+      if (isCur) {
+        setTimeout(() => {
+          chip.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        }, 50);
+      }
+    });
+  }
+
+  renderPlayerCarousel();
+
+  // 3. Render Hero section
+  const heroImg = document.getElementById('thHeroImg');
+  const heroName = document.getElementById('thHeroName');
+  const heroMeta = document.getElementById('thHeroMeta');
+  const heroPoints = document.getElementById('thHeroPoints');
+  const heroBaseOvr = document.getElementById('thHeroBaseOvr');
+  const heroBonusOvr = document.getElementById('thHeroBonusOvr');
+
+  if (heroImg) {
+    heroImg.src = player.image || 'pers/Vibor/Выбор.png';
+    heroImg.alt = player.name;
+  }
+  if (heroName) heroName.textContent = player.name;
+  if (heroMeta) {
+    heroMeta.innerHTML = `${player.position} • Базовый ${player.rating} OVR • ${getCountryFlag(player.country)} ${player.country}`;
+  }
+  if (heroPoints) {
+    heroPoints.textContent = `${pData.points} TP`;
+  }
+  const totalPoints = getPlayerInvestedPoints(pData);
+  const curBonusOvr = Math.floor(totalPoints / 5);
+  const totalOvr = (player.rating || 75) + curBonusOvr;
+
+  const heroOvrWrap = document.getElementById('thHeroOvrWrap') || (heroBaseOvr ? heroBaseOvr.parentElement : null);
+  if (heroOvrWrap) {
+    heroOvrWrap.innerHTML = `РЕЙТИНГ: <b>${totalOvr}</b> <span class="ovr-green">(+${curBonusOvr} OVR)</span> <small style="opacity:0.7;margin-left:6px;">[Вложено: ${totalPoints} TP]</small>`;
+  } else {
+    if (heroBaseOvr) heroBaseOvr.textContent = player.rating;
+    if (heroBonusOvr) {
+      heroBonusOvr.textContent = curBonusOvr > 0 ? `+${curBonusOvr} OVR` : '+0 OVR';
+      heroBonusOvr.style.color = curBonusOvr > 0 ? 'var(--gold)' : 'rgba(255,255,255,0.4)';
+    }
+  }
+
+  // 4. Render 5 Skills
+  const container = document.getElementById('thSkillsContainer');
+  if (container) {
+    container.innerHTML = '';
+    const isGk = player.position === 'GK';
+    const skillsList = isGk ? GK_SKILLS : OUTFIELD_SKILLS;
+
+    skillsList.forEach(sk => {
+      const val = Math.min(MAX_SKILL_UPGRADE, Math.max(0, parseInt(pData.stats[sk.key], 10) || 0));
+      const card = document.createElement('div');
+      card.className = 'th-skill-card';
+      const isMax = val >= MAX_SKILL_UPGRADE;
+      const canUpgrade = pData.points > 0 && !isMax;
+
+      const perksHtml = getSkillPerkHtml(sk.key, val);
+
+      card.innerHTML = `
+        <div class="th-sc-left">
+          <span class="th-sc-icon">${sk.icon}</span>
+          <div class="th-sc-text">
+            <span class="th-sc-name">${sk.name}</span>
+            <span class="th-sc-desc">${sk.desc}</span>
+            ${perksHtml}
+          </div>
+        </div>
+        <div class="th-sc-center">
+          <span class="th-sc-val">+${val} / ${MAX_SKILL_UPGRADE}</span>
+          <div class="th-sc-bar-wrap">
+            <div class="th-sc-bar-fill" style="width: ${(val / MAX_SKILL_UPGRADE) * 100}%;"></div>
+          </div>
+        </div>
+        <button class="th-sc-btn-plus" title="Вложить 1 TP (+1)" ${canUpgrade ? '' : 'disabled'}>+</button>
+      `;
+
+      const btnPlus = card.querySelector('.th-sc-btn-plus');
+      btnPlus.addEventListener('click', () => {
+        const curEntry = getPlayerTrainingData(player.id, player.position);
+        if (curEntry.points <= 0) {
+          showToast(`Недостаточно очков (TP) у игрока ${player.name}! Сыграйте турнирный матч.`);
+          return;
+        }
+        const currentVal = Math.min(MAX_SKILL_UPGRADE, Math.max(0, parseInt(curEntry.stats[sk.key], 10) || 0));
+        if (currentVal >= MAX_SKILL_UPGRADE) {
+          showToast(`Навык ${sk.name} уже прокачан до максимума (+${MAX_SKILL_UPGRADE})!`);
+          return;
+        }
+
+        curEntry.points -= 1;
+        curEntry.stats[sk.key] = currentVal + 1;
+        const all = getAllPlayerTrainingData();
+        all[String(player.id)] = curEntry;
+        saveAllPlayerTrainingData(all);
+
+        let perkUnlockedMsg = '';
+        if (curEntry.stats[sk.key] === 10 && SKILL_PERKS[sk.key] && SKILL_PERKS[sk.key][10]) {
+          perkUnlockedMsg = ` ✨ Открыт перк: «${SKILL_PERKS[sk.key][10].name}»!`;
+        } else if (curEntry.stats[sk.key] === 20 && SKILL_PERKS[sk.key] && SKILL_PERKS[sk.key][20]) {
+          perkUnlockedMsg = ` ⭐ Открыт перк: «${SKILL_PERKS[sk.key][20].name}»!`;
+        }
+
+        showToast(`⚡ ${player.name}: +1 к ${sk.name}!${perkUnlockedMsg} Осталось ${curEntry.points} TP.`);
+        openTrainingHubModal(player.id);
+        updateClubOVR();
+      });
+
+      container.appendChild(card);
+    });
+  }
+
+  // 5. Individual Reset Button
+  const btnReset = document.getElementById('btnThResetPlayer');
+  if (btnReset) {
+    btnReset.onclick = () => {
+      const all = getAllPlayerTrainingData();
+      const curEntry = getPlayerTrainingData(player.id, player.position);
+      const totalSpent = getPlayerInvestedPoints(curEntry);
+      if (totalSpent <= 0) {
+        showToast('У этого игрока нет вложенных очков навыков для сброса.');
+        return;
+      }
+      for (const k of Object.keys(curEntry.stats)) {
+        curEntry.stats[k] = 0;
+      }
+
+      curEntry.points = (curEntry.points || 0) + totalSpent;
+      all[String(player.id)] = curEntry;
+      saveAllPlayerTrainingData(all);
+
+      showToast(`↺ Навыки ${player.name} сброшены! Игроку возвращено ${totalSpent} TP.`);
+      openTrainingHubModal(player.id);
+      updateClubOVR();
+    };
+  }
+
+  updateTrainingHubBadge();
   modal.classList.remove('hidden');
+}
+
+function openTrainingCampModal(playerId) {
+  openTrainingHubModal(playerId);
 }
 
 function openRolesPickerModal(roleKey) {
@@ -2295,7 +3041,14 @@ function openRolesPickerModal(roleKey) {
     penalty: 'НАЗНАЧЕНИЕ ПЕНАЛЬТИСТА (SHO)',
     setPieces: 'ИСПОЛНИТЕЛЬ СТАНДАРТОВ (PAS)'
   };
+  const roleIcons = {
+    captain: '👑',
+    penalty: '🎯',
+    setPieces: '👟'
+  };
   if (title) title.textContent = roleTitles[roleKey] || 'НАЗНАЧЕНИЕ РОЛИ';
+  const icon = document.getElementById('rolesPickerIcon');
+  if (icon) icon.textContent = roleIcons[roleKey] || '👑';
 
   list.innerHTML = '';
   const squadIds = (save.myClubSquad || []).filter(Boolean);
@@ -2499,8 +3252,358 @@ function openClubStatsModal() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   18. ТОП-КЛУБЫ, РЕАЛЬНЫЕ ЗВЁЗДЫ И СИСТЕМА ТУРНИРОВ
+   18. ТОП-КЛУБЫ, РАСШИРЕННЫЕ ПУЛЫ И ДИНАМИЧЕСКАЯ ЖЕРЕБЬЕВКА
 ═══════════════════════════════════════════════════════════════════ */
+const TOURNAMENT_POOLS = {
+  pl: [
+    { club: 'Манчестер Сити', ovr: 89, stars: ['Холанн', 'Де Брёйне', 'Родри', 'Фоден', 'Бернарду'], gk: 'Эдерсон' },
+    { club: 'Ливерпуль', ovr: 88, stars: ['Салах', 'Ван Дейк', 'Трент', 'Макаллистер', 'Диас'], gk: 'Алиссон' },
+    { club: 'Арсенал', ovr: 87, stars: ['Сака', 'Эдегор', 'Салиба', 'Райс', 'Мартинелли'], gk: 'Райя' },
+    { club: 'Челси', ovr: 84, stars: ['Палмер', 'Энцо', 'Кайседо', 'Джексон', 'Нкунку'], gk: 'Санчес' },
+    { club: 'Манчестер Юнайтед', ovr: 84, stars: ['Бруну Фернандеш', 'Рашфорд', 'Гарначо', 'Каземиро', 'Де Лигт'], gk: 'Онана' },
+    { club: 'Тоттенхэм', ovr: 83, stars: ['Сон', 'Мэддисон', 'Ромеро', 'Кулусевски', 'Порро'], gk: 'Викарио' },
+    { club: 'Ньюкасл', ovr: 83, stars: ['Исак', 'Гимарайнс', 'Гордон', 'Жоэлинтон', 'Шер'], gk: 'Поуп' },
+    { club: 'Астон Вилла', ovr: 83, stars: ['Уоткинс', 'Тилеманс', 'Макгинн', 'Бэйли', 'Пау Торрес'], gk: 'Мартинес' }
+  ],
+  laliga: [
+    { club: 'Реал Мадрид', ovr: 90, stars: ['Винисиус', 'Мбаппе', 'Беллингем', 'Вальверде', 'Родриго'], gk: 'Куртуа' },
+    { club: 'Барселона', ovr: 88, stars: ['Левандовски', 'Ямаль', 'Педри', 'Рафинья', 'Гави'], gk: 'тер Стеген' },
+    { club: 'Атлетико Мадрид', ovr: 86, stars: ['Гризманн', 'Альварес', 'Де Пауль', 'Коке', 'Хименес'], gk: 'Облак' },
+    { club: 'Севилья', ovr: 82, stars: ['Окампос', 'Лукебакио', 'Гудель', 'Навас', 'Сауль'], gk: 'Нюланд' },
+    { club: 'Реал Сосьедад', ovr: 83, stars: ['Субименди', 'Кубо', 'Оярсабаль', 'Браис Мендес', 'Ремиро'], gk: 'Ремиро' },
+    { club: 'Вильярреал', ovr: 82, stars: ['Баэна', 'Жерар Морено', 'Айосе Перес', 'Парехо', 'Альбиоль'], gk: 'Конде' },
+    { club: 'Бетис', ovr: 82, stars: ['Иско', 'Ло Чельсо', 'Форнальс', 'Бакамбу', 'Бельерин'], gk: 'Силва' },
+    { club: 'Атлетик Бильбао', ovr: 83, stars: ['Нико Уильямс', 'Иньяки Уильямс', 'Сансет', 'Вивиан', 'Гурусета'], gk: 'Симон' }
+  ],
+  ucl: [
+    { club: 'Бавария', ovr: 90, stars: ['Кейн', 'Мусиала', 'Сане', 'Киммих', 'Дэвис'], gk: 'Нойер' },
+    { club: 'ПСЖ', ovr: 89, stars: ['Дембеле', 'Барколя', 'Витинья', 'Хакими', 'Маркиньос'], gk: 'Доннарумма' },
+    { club: 'Интер', ovr: 88, stars: ['Лаутаро', 'Барелла', 'Тюрам', 'Чалханоглу', 'Бастони'], gk: 'Зоммер' },
+    { club: 'Боруссия Д', ovr: 85, stars: ['Брандт', 'Гирасси', 'Мален', 'Забитцер', 'Шлоттербек'], gk: 'Кобель' },
+    { club: 'Ювентус', ovr: 85, stars: ['Влахович', 'Йылдыз', 'Копмейнерс', 'Локателли', 'Бремер'], gk: 'Ди Грегорио' },
+    { club: 'Байер Леверкузен', ovr: 87, stars: ['Вирц', 'Джака', 'Гримальдо', 'Фримпонг', 'Та'], gk: 'Градецки' },
+    { club: 'Реал Мадрид', ovr: 92, stars: ['Винисиус', 'Мбаппе', 'Беллингем', 'Вальверде', 'Куртуа'], gk: 'Куртуа' },
+    { club: 'Манчестер Сити', ovr: 91, stars: ['Холанн', 'Де Брёйне', 'Родри', 'Фоден', 'Диаш'], gk: 'Эдерсон' },
+    { club: 'Барселона', ovr: 89, stars: ['Левандовски', 'Ямаль', 'Педри', 'Рафинья', 'Гави'], gk: 'тер Стеген' },
+    { club: 'Ливерпуль', ovr: 89, stars: ['Салах', 'Ван Дейк', 'Трент', 'Макаллистер', 'Диас'], gk: 'Алиссон' },
+    { club: 'Арсенал', ovr: 88, stars: ['Сака', 'Эдегор', 'Салиба', 'Райс', 'Мартинелли'], gk: 'Райя' }
+  ]
+};
+
+const OPPONENT_ROSTERS = {
+  'Атлетик Бильбао': [
+    { role: 'GK', name: 'Симон' },
+    { role: 'RB', name: 'Де Маркос' },
+    { role: 'CB', name: 'Вивиан' },
+    { role: 'CB', name: 'Йерай' },
+    { role: 'LB', name: 'Берчиче' },
+    { role: 'CM', name: 'Весга' },
+    { role: 'CAM', name: 'Сансет' },
+    { role: 'CM', name: 'Прадос' },
+    { role: 'RW', name: 'Иньяки Уильямс' },
+    { role: 'ST', name: 'Гурусета' },
+    { role: 'LW', name: 'Нико Уильямс' }
+  ],
+  'Ливерпуль': [
+    { role: 'GK', name: 'Алиссон' },
+    { role: 'RB', name: 'Трент' },
+    { role: 'CB', name: 'Конате' },
+    { role: 'CB', name: 'Ван Дейк' },
+    { role: 'LB', name: 'Робертсон' },
+    { role: 'CM', name: 'Гравенберх' },
+    { role: 'CAM', name: 'Собослаи' },
+    { role: 'CM', name: 'Макаллистер' },
+    { role: 'RW', name: 'Салах' },
+    { role: 'ST', name: 'Нуньес' },
+    { role: 'LW', name: 'Диас' }
+  ],
+  'Манчестер Сити': [
+    { role: 'GK', name: 'Эдерсон' },
+    { role: 'RB', name: 'Уокер' },
+    { role: 'CB', name: 'Диаш' },
+    { role: 'CB', name: 'Аканджи' },
+    { role: 'LB', name: 'Гвардиол' },
+    { role: 'CM', name: 'Родри' },
+    { role: 'CAM', name: 'Де Брёйне' },
+    { role: 'CM', name: 'Ковачич' },
+    { role: 'RW', name: 'Бернарду' },
+    { role: 'ST', name: 'Холанн' },
+    { role: 'LW', name: 'Фоден' }
+  ],
+  'Арсенал': [
+    { role: 'GK', name: 'Райя' },
+    { role: 'RB', name: 'Уайт' },
+    { role: 'CB', name: 'Салиба' },
+    { role: 'CB', name: 'Габриэл' },
+    { role: 'LB', name: 'Тимбер' },
+    { role: 'CM', name: 'Парти' },
+    { role: 'CAM', name: 'Эдегор' },
+    { role: 'CM', name: 'Райс' },
+    { role: 'RW', name: 'Сака' },
+    { role: 'ST', name: 'Хавертц' },
+    { role: 'LW', name: 'Мартинелли' }
+  ],
+  'Челси': [
+    { role: 'GK', name: 'Санчес' },
+    { role: 'RB', name: 'Гюсто' },
+    { role: 'CB', name: 'Фофана' },
+    { role: 'CB', name: 'Колвилл' },
+    { role: 'LB', name: 'Кукурелья' },
+    { role: 'CM', name: 'Кайседо' },
+    { role: 'CAM', name: 'Палмер' },
+    { role: 'CM', name: 'Энцо' },
+    { role: 'RW', name: 'Мадуэке' },
+    { role: 'ST', name: 'Джексон' },
+    { role: 'LW', name: 'Нету' }
+  ],
+  'Манчестер Юнайтед': [
+    { role: 'GK', name: 'Онана' },
+    { role: 'RB', name: 'Мазрауи' },
+    { role: 'CB', name: 'Де Лигт' },
+    { role: 'CB', name: 'Мартинес' },
+    { role: 'LB', name: 'Далот' },
+    { role: 'CM', name: 'Каземиро' },
+    { role: 'CAM', name: 'Бруну Фернандеш' },
+    { role: 'CM', name: 'Майну' },
+    { role: 'RW', name: 'Гарначо' },
+    { role: 'ST', name: 'Хёйлунн' },
+    { role: 'LW', name: 'Рашфорд' }
+  ],
+  'Тоттенхэм': [
+    { role: 'GK', name: 'Викарио' },
+    { role: 'RB', name: 'Порро' },
+    { role: 'CB', name: 'Ромеро' },
+    { role: 'CB', name: 'ван де Вен' },
+    { role: 'LB', name: 'Удоджи' },
+    { role: 'CM', name: 'Биссума' },
+    { role: 'CAM', name: 'Мэддисон' },
+    { role: 'CM', name: 'Сарр' },
+    { role: 'RW', name: 'Кулусевски' },
+    { role: 'ST', name: 'Соланке' },
+    { role: 'LW', name: 'Сон' }
+  ],
+  'Ньюкасл': [
+    { role: 'GK', name: 'Поуп' },
+    { role: 'RB', name: 'Триппьер' },
+    { role: 'CB', name: 'Шер' },
+    { role: 'CB', name: 'Берн' },
+    { role: 'LB', name: 'Холл' },
+    { role: 'CM', name: 'Тонали' },
+    { role: 'CAM', name: 'Жоэлинтон' },
+    { role: 'CM', name: 'Гимарайнс' },
+    { role: 'RW', name: 'Мёрфи' },
+    { role: 'ST', name: 'Исак' },
+    { role: 'LW', name: 'Гордон' }
+  ],
+  'Астон Вилла': [
+    { role: 'GK', name: 'Мартинес' },
+    { role: 'RB', name: 'Кэш' },
+    { role: 'CB', name: 'Конса' },
+    { role: 'CB', name: 'Пау Торрес' },
+    { role: 'LB', name: 'Динь' },
+    { role: 'CM', name: 'Онана' },
+    { role: 'CAM', name: 'Макгинн' },
+    { role: 'CM', name: 'Тилеманс' },
+    { role: 'RW', name: 'Бэйли' },
+    { role: 'ST', name: 'Уоткинс' },
+    { role: 'LW', name: 'Роджерс' }
+  ],
+  'Реал Мадрид': [
+    { role: 'GK', name: 'Куртуа' },
+    { role: 'RB', name: 'Карвахаль' },
+    { role: 'CB', name: 'Рюдигер' },
+    { role: 'CB', name: 'Милитао' },
+    { role: 'LB', name: 'Менди' },
+    { role: 'CM', name: 'Вальверде' },
+    { role: 'CAM', name: 'Беллингем' },
+    { role: 'CM', name: 'Тчуамени' },
+    { role: 'RW', name: 'Родриго' },
+    { role: 'ST', name: 'Мбаппе' },
+    { role: 'LW', name: 'Винисиус' }
+  ],
+  'Барселона': [
+    { role: 'GK', name: 'тер Стеген' },
+    { role: 'RB', name: 'Кунде' },
+    { role: 'CB', name: 'Кубарси' },
+    { role: 'CB', name: 'Иньиго Мартинес' },
+    { role: 'LB', name: 'Бальде' },
+    { role: 'CM', name: 'Касадо' },
+    { role: 'CAM', name: 'Ольмо' },
+    { role: 'CM', name: 'Педри' },
+    { role: 'RW', name: 'Ямаль' },
+    { role: 'ST', name: 'Левандовски' },
+    { role: 'LW', name: 'Рафинья' }
+  ],
+  'Атлетико Мадрид': [
+    { role: 'GK', name: 'Облак' },
+    { role: 'RB', name: 'Молина' },
+    { role: 'CB', name: 'Ле Норман' },
+    { role: 'CB', name: 'Хименес' },
+    { role: 'LB', name: 'Рейнилду' },
+    { role: 'CM', name: 'Де Пауль' },
+    { role: 'CAM', name: 'Гризманн' },
+    { role: 'CM', name: 'Коке' },
+    { role: 'RW', name: 'Льоренте' },
+    { role: 'ST', name: 'Альварес' },
+    { role: 'LW', name: 'Серлот' }
+  ],
+  'Севилья': [
+    { role: 'GK', name: 'Нюланд' },
+    { role: 'RB', name: 'Кармона' },
+    { role: 'CB', name: 'Баде' },
+    { role: 'CB', name: 'Гудель' },
+    { role: 'LB', name: 'Педроса' },
+    { role: 'CM', name: 'Локонга' },
+    { role: 'CAM', name: 'Соу' },
+    { role: 'CM', name: 'Сауль' },
+    { role: 'RW', name: 'Лукебакио' },
+    { role: 'ST', name: 'Исаак Ромеро' },
+    { role: 'LW', name: 'Эджуке' }
+  ],
+  'Реал Сосьедад': [
+    { role: 'GK', name: 'Ремиро' },
+    { role: 'RB', name: 'Арамбуру' },
+    { role: 'CB', name: 'Субельдия' },
+    { role: 'CB', name: 'Агерд' },
+    { role: 'LB', name: 'Хави Лопес' },
+    { role: 'CM', name: 'Субименди' },
+    { role: 'CAM', name: 'Браис Мендес' },
+    { role: 'CM', name: 'Сучич' },
+    { role: 'RW', name: 'Кубо' },
+    { role: 'ST', name: 'Оскарссон' },
+    { role: 'LW', name: 'Оярсабаль' }
+  ],
+  'Вильярреал': [
+    { role: 'GK', name: 'Конде' },
+    { role: 'RB', name: 'Фемения' },
+    { role: 'CB', name: 'Альбиоль' },
+    { role: 'CB', name: 'Байи' },
+    { role: 'LB', name: 'Кардона' },
+    { role: 'CM', name: 'Комесанья' },
+    { role: 'CAM', name: 'Баэна' },
+    { role: 'CM', name: 'Парехо' },
+    { role: 'RW', name: 'Пино' },
+    { role: 'ST', name: 'Жерар Морено' },
+    { role: 'LW', name: 'Айосе Перес' }
+  ],
+  'Бетис': [
+    { role: 'GK', name: 'Силва' },
+    { role: 'RB', name: 'Бельерин' },
+    { role: 'CB', name: 'Бартра' },
+    { role: 'CB', name: 'Льоренте' },
+    { role: 'LB', name: 'Перро' },
+    { role: 'CM', name: 'Карвалью' },
+    { role: 'CAM', name: 'Иско' },
+    { role: 'CM', name: 'Ло Чельсо' },
+    { role: 'RW', name: 'Форнальс' },
+    { role: 'ST', name: 'Бакамбу' },
+    { role: 'LW', name: 'Абде' }
+  ],
+  'Бавария': [
+    { role: 'GK', name: 'Нойер' },
+    { role: 'RB', name: 'Лаймер' },
+    { role: 'CB', name: 'Упамекано' },
+    { role: 'CB', name: 'Ким Мин Джэ' },
+    { role: 'LB', name: 'Дэвис' },
+    { role: 'CM', name: 'Киммих' },
+    { role: 'CAM', name: 'Мусиала' },
+    { role: 'CM', name: 'Павлович' },
+    { role: 'RW', name: 'Олисе' },
+    { role: 'ST', name: 'Кейн' },
+    { role: 'LW', name: 'Гнабри' }
+  ],
+  'ПСЖ': [
+    { role: 'GK', name: 'Доннарумма' },
+    { role: 'RB', name: 'Хакими' },
+    { role: 'CB', name: 'Маркиньос' },
+    { role: 'CB', name: 'Пачо' },
+    { role: 'LB', name: 'Мендеш' },
+    { role: 'CM', name: 'Заир-Эмери' },
+    { role: 'CAM', name: 'Невеш' },
+    { role: 'CM', name: 'Витинья' },
+    { role: 'RW', name: 'Дембеле' },
+    { role: 'ST', name: 'Коло Муани' },
+    { role: 'LW', name: 'Барколя' }
+  ],
+  'Интер': [
+    { role: 'GK', name: 'Зоммер' },
+    { role: 'RB', name: 'Думфрис' },
+    { role: 'CB', name: 'Павар' },
+    { role: 'CB', name: 'Ачерби' },
+    { role: 'LB', name: 'Димарко' },
+    { role: 'CM', name: 'Барелла' },
+    { role: 'CAM', name: 'Мхитарян' },
+    { role: 'CM', name: 'Чалханоглу' },
+    { role: 'RW', name: 'Бастони' },
+    { role: 'ST', name: 'Лаутаро' },
+    { role: 'LW', name: 'Тюрам' }
+  ],
+  'Боруссия Д': [
+    { role: 'GK', name: 'Кобель' },
+    { role: 'RB', name: 'Рюэрсон' },
+    { role: 'CB', name: 'Антон' },
+    { role: 'CB', name: 'Шлоттербек' },
+    { role: 'LB', name: 'Бенсебайни' },
+    { role: 'CM', name: 'Джан' },
+    { role: 'CAM', name: 'Брандт' },
+    { role: 'CM', name: 'Забитцер' },
+    { role: 'RW', name: 'Мален' },
+    { role: 'ST', name: 'Гирасси' },
+    { role: 'LW', name: 'Байно-Гиттенс' }
+  ],
+  'Ювентус': [
+    { role: 'GK', name: 'Ди Грегорио' },
+    { role: 'RB', name: 'Калулу' },
+    { role: 'CB', name: 'Гатти' },
+    { role: 'CB', name: 'Бремер' },
+    { role: 'LB', name: 'Камбьязо' },
+    { role: 'CM', name: 'Локателли' },
+    { role: 'CAM', name: 'Копмейнерс' },
+    { role: 'CM', name: 'Тюрам' },
+    { role: 'RW', name: 'Консейсау' },
+    { role: 'ST', name: 'Влахович' },
+    { role: 'LW', name: 'Йылдыз' }
+  ],
+  'Байер Леверкузен': [
+    { role: 'GK', name: 'Градецки' },
+    { role: 'RB', name: 'Фримпонг' },
+    { role: 'CB', name: 'Та' },
+    { role: 'CB', name: 'Тапсоба' },
+    { role: 'LB', name: 'Гримальдо' },
+    { role: 'CM', name: 'Джака' },
+    { role: 'CAM', name: 'Вирц' },
+    { role: 'CM', name: 'Андрих' },
+    { role: 'RW', name: 'Телла' },
+    { role: 'ST', name: 'Бонифейс' },
+    { role: 'LW', name: 'Адли' }
+  ]
+};
+
+function getOpponentRoster(clubName) {
+  if (clubName && OPPONENT_ROSTERS[clubName]) {
+    return OPPONENT_ROSTERS[clubName];
+  }
+  // Try partial match
+  if (clubName) {
+    const foundKey = Object.keys(OPPONENT_ROSTERS).find(k => clubName.includes(k) || k.includes(clubName));
+    if (foundKey) return OPPONENT_ROSTERS[foundKey];
+  }
+  // Fallback 11 unique players
+  return [
+    { role: 'GK',  name: 'Вратарь' },
+    { role: 'RB',  name: 'Правый Защ.' },
+    { role: 'CB',  name: 'Центр. Защ. 1' },
+    { role: 'CB',  name: 'Центр. Защ. 2' },
+    { role: 'LB',  name: 'Левый Защ.' },
+    { role: 'CM',  name: 'Опорник' },
+    { role: 'CAM', name: 'Плеймейкер' },
+    { role: 'CM',  name: 'Центр. Хавбек' },
+    { role: 'RW',  name: 'Правый Вингер' },
+    { role: 'ST',  name: 'Форвард' },
+    { role: 'LW',  name: 'Левый Вингер' }
+  ];
+}
+
 const TOURNAMENTS_CONFIG = [
   {
     id: 'pl',
@@ -2509,29 +3612,6 @@ const TOURNAMENTS_CONFIG = [
     icon: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
     diff: 'Сложность: Средняя',
     cardClass: 'tournament-card--pl',
-    stages: [
-      {
-        name: '1/4 Финала',
-        club: 'Челси',
-        ovr: 84,
-        stars: ['Палмер', 'Энцо', 'Кайседо', 'Джексон', 'Санчес'],
-        gk: 'Санчес'
-      },
-      {
-        name: '1/2 Финала',
-        club: 'Ливерпуль',
-        ovr: 87,
-        stars: ['Салах', 'Ван Дейк', 'Трент', 'Макаллистер', 'Алиссон'],
-        gk: 'Алиссон'
-      },
-      {
-        name: 'Финал',
-        club: 'Манчестер Сити',
-        ovr: 89,
-        stars: ['Холанн', 'Де Брёйне', 'Родри', 'Фоден', 'Эдерсон'],
-        gk: 'Эдерсон'
-      }
-    ],
     rewards: { coins: 2500, xp: 100, pack: 'pro' }
   },
   {
@@ -2541,29 +3621,6 @@ const TOURNAMENTS_CONFIG = [
     icon: '🇪🇸',
     diff: 'Сложность: Высокая',
     cardClass: 'tournament-card--laliga',
-    stages: [
-      {
-        name: '1/4 Финала',
-        club: 'Атлетико Мадрид',
-        ovr: 85,
-        stars: ['Гризманн', 'Альварес', 'Де Пауль', 'Хименес', 'Облак'],
-        gk: 'Облак'
-      },
-      {
-        name: '1/2 Финала',
-        club: 'Барселона',
-        ovr: 88,
-        stars: ['Левандовски', 'Ямаль', 'Педри', 'Гави', 'тер Стеген'],
-        gk: 'тер Стеген'
-      },
-      {
-        name: 'Финал',
-        club: 'Реал Мадрид',
-        ovr: 90,
-        stars: ['Винисиус', 'Мбаппе', 'Беллингем', 'Вальверде', 'Куртуа'],
-        gk: 'Куртуа'
-      }
-    ],
     rewards: { coins: 3500, xp: 150, pack: 'elite' }
   },
   {
@@ -2573,32 +3630,54 @@ const TOURNAMENTS_CONFIG = [
     icon: '🏆',
     diff: 'Сложность: Эксперт',
     cardClass: 'tournament-card--ucl',
-    stages: [
-      {
-        name: '1/4 Финала',
-        club: 'Интер Милан',
-        ovr: 87,
-        stars: ['Лаутаро', 'Барелла', 'Тюрам', 'Чалханоглу', 'Зоммер'],
-        gk: 'Зоммер'
-      },
-      {
-        name: '1/2 Финала',
-        club: 'Бавария / ПСЖ',
-        ovr: 89,
-        stars: ['Кейн', 'Мусиала', 'Дембеле', 'Киммих', 'Нойер'],
-        gk: 'Нойер'
-      },
-      {
-        name: 'Финал',
-        club: 'Реал Мадрид',
-        ovr: 92,
-        stars: ['Винисиус', 'Мбаппе', 'Беллингем', 'Вальверде', 'Куртуа'],
-        gk: 'Куртуа'
-      }
-    ],
     rewards: { coins: 5000, xp: 250, pack: 'matus' }
   }
 ];
+
+function generateTournamentBracket(tournId) {
+  const pool = TOURNAMENT_POOLS[tournId] || TOURNAMENT_POOLS.pl;
+  const shuffled = [...pool].sort(() => Math.random() - 0.5);
+  // Pick 7 distinct opponents for an 8-team knockout bracket (User + 7 clubs)
+  const drawn = shuffled.slice(0, 7);
+
+  const stages = [
+    {
+      name: '1/4 Финала',
+      club: drawn[0].club,
+      ovr: drawn[0].ovr,
+      stars: drawn[0].stars,
+      gk: drawn[0].gk
+    },
+    {
+      name: '1/2 Финала',
+      club: (drawn[1].ovr >= drawn[2].ovr ? drawn[1] : drawn[2]).club,
+      ovr: Math.max(drawn[1].ovr, drawn[2].ovr),
+      stars: (drawn[1].ovr >= drawn[2].ovr ? drawn[1] : drawn[2]).stars,
+      gk: (drawn[1].ovr >= drawn[2].ovr ? drawn[1] : drawn[2]).gk
+    },
+    {
+      name: 'Финал',
+      club: (drawn[3].ovr >= drawn[4].ovr ? drawn[3] : drawn[4]).club,
+      ovr: Math.max(drawn[3].ovr, drawn[4].ovr, drawn[5]?.ovr || 86),
+      stars: (drawn[3].ovr >= drawn[4].ovr ? drawn[3] : drawn[4]).stars,
+      gk: (drawn[3].ovr >= drawn[4].ovr ? drawn[3] : drawn[4]).gk
+    }
+  ];
+
+  if (!save.tournaments) save.tournaments = {};
+  if (!save.tournaments[tournId]) save.tournaments[tournId] = { stage: 0, won: false };
+  save.tournaments[tournId].stages = stages;
+  save.tournaments[tournId].drawnClubs = drawn.map(d => d.club);
+  writeSave();
+  return stages;
+}
+
+function getTournamentStages(tournId) {
+  if (save.tournaments && save.tournaments[tournId] && Array.isArray(save.tournaments[tournId].stages) && save.tournaments[tournId].stages.length === 3) {
+    return save.tournaments[tournId].stages;
+  }
+  return generateTournamentBracket(tournId);
+}
 
 function openTournamentsModal() {
   const modal = document.getElementById('modalTournaments');
@@ -2609,24 +3688,35 @@ function openTournamentsModal() {
   if (!save.tournaments) {
     save.tournaments = { pl: { stage: 0, won: false }, laliga: { stage: 0, won: false }, ucl: { stage: 0, won: false } };
   }
+  if (!save.trophyCounts) save.trophyCounts = { pl: 0, laliga: 0, ucl: 0 };
+
+  // Update Trophy Room counts in modal top
+  const elPl = document.getElementById('trophyCountPL');
+  const elLaliga = document.getElementById('trophyCountLaLiga');
+  const elUcl = document.getElementById('trophyCountUCL');
+  if (elPl) elPl.textContent = `🏆 ${save.trophyCounts.pl || 0}`;
+  if (elLaliga) elLaliga.textContent = `🏆 ${save.trophyCounts.laliga || 0}`;
+  if (elUcl) elUcl.textContent = `🏆 ${save.trophyCounts.ucl || 0}`;
 
   TOURNAMENTS_CONFIG.forEach(tourn => {
     const tState = save.tournaments[tourn.id] || { stage: 0, won: false };
+    const stages = getTournamentStages(tourn.id);
     const curStageIdx = Math.min(2, tState.stage);
-    const stageInfo = tourn.stages[curStageIdx];
+    const stageInfo = stages[curStageIdx] || stages[0];
     const isWon = tState.won;
+    const trophiesWon = (save.trophyCounts && save.trophyCounts[tourn.id]) || 0;
 
     const card = document.createElement('div');
     card.className = `tournament-card ${tourn.cardClass}`;
 
     // Bracket stages
-    const bracketHtml = tourn.stages.map((s, idx) => {
+    const bracketHtml = stages.map((s, idx) => {
       let statusClass = '';
       if (isWon || idx < curStageIdx) statusClass = 'completed';
       else if (idx === curStageIdx) statusClass = 'active';
 
       const icon = isWon || idx < curStageIdx ? '✓' : (idx === curStageIdx ? '▶' : '○');
-      return `<div class="bracket-step ${statusClass}">${icon} ${s.name}</div>`;
+      return `<div class="bracket-step ${statusClass}" title="${s.club}">${icon} ${s.name} (${s.club})</div>`;
     }).join('<span class="bracket-arrow">➔</span>');
 
     card.innerHTML = `
@@ -2638,7 +3728,10 @@ function openTournamentsModal() {
             <div class="tourn-diff">${tourn.diff}</div>
           </div>
         </div>
-        ${isWon ? '<span style="font-family:var(--ui);font-weight:900;color:var(--gold);font-size:.8rem;">👑 ТРОФЕЙ</span>' : ''}
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;">
+          ${trophiesWon > 0 ? `<span style="font-family:var(--ui);font-weight:900;color:var(--gold);font-size:.78rem;">🏆 Кубков: ${trophiesWon}</span>` : ''}
+          ${isWon ? '<span style="font-family:var(--ui);font-weight:900;color:#00e676;font-size:.72rem;">👑 ЧЕМПИОН</span>' : ''}
+        </div>
       </div>
 
       <div class="tourn-bracket">
@@ -2647,21 +3740,24 @@ function openTournamentsModal() {
 
       <div class="tourn-matchup">
         <div class="tourn-opp-info">
-          <div class="tourn-opp-name">${isWon ? 'Кубок завоёван!' : `Соперник: ${stageInfo.club} (${stageInfo.name})`}</div>
-          <div class="tourn-opp-stars">${isWon ? 'Все соперники повержены' : `Звёзды: ${stageInfo.stars.slice(0, 3).join(', ')}`}</div>
+          <div class="tourn-opp-name">${isWon ? 'Кубок завоёван! Жеребьевка доступна' : `Соперник: ${stageInfo.club} (${stageInfo.name})`}</div>
+          <div class="tourn-opp-stars">${isWon ? 'Сыграйте новый розыгрыш кубка с новыми клубами' : `Звёзды: ${stageInfo.stars.slice(0, 3).join(', ')} • ВРТ: ${stageInfo.gk}`}</div>
         </div>
         <div class="tourn-opp-ovr">${isWon ? '👑' : `OVR ${stageInfo.ovr}`}</div>
       </div>
 
       <button class="btn-gold tourn-play-btn" data-tournid="${tourn.id}">
-        ${isWon ? '🔄 Сыграть заново' : `▶ Играть матч (${stageInfo.name})`}
+        ${isWon ? '🔄 Новый розыгрыш (Жеребьевка)' : `▶ Играть матч (${stageInfo.name})`}
       </button>
     `;
 
     const playBtn = card.querySelector('.tourn-play-btn');
     playBtn.addEventListener('click', () => {
       if (isWon) {
-        save.tournaments[tourn.id] = { stage: 0, won: false };
+        // Dynamic draw for new campaign!
+        generateTournamentBracket(tourn.id);
+        save.tournaments[tourn.id].stage = 0;
+        save.tournaments[tourn.id].won = false;
         writeSave();
       }
       save.activeTournamentId = tourn.id;
@@ -2684,6 +3780,25 @@ let simIsPaused = false;
 let simAnimId = null;
 let simIntervalId = null;
 let simMinute = 0;
+let simAddedTime = 0;
+let simIsHalftimePause = false;
+let simHalftimeTimeout = null;
+
+function stopSimLoops() {
+  simRunning = false;
+  if (simIntervalId) {
+    clearInterval(simIntervalId);
+    simIntervalId = null;
+  }
+  if (simAnimId) {
+    cancelAnimationFrame(simAnimId);
+    simAnimId = null;
+  }
+  if (simHalftimeTimeout) {
+    clearTimeout(simHalftimeTimeout);
+    simHalftimeTimeout = null;
+  }
+}
 let simSpeedMode = 1; // 1: 1x (500ms), 2: 2x (250ms), 3: Skip to end
 let simScoreUser = 0;
 let simScoreAi = 0;
@@ -2702,11 +3817,17 @@ let simUsedBenchIds = new Set();
 let simUserInjuries = {}; // slotIndex -> boolean
 let simSelectedSubId = null;
 let simSelectedPitchSlot = null;
+let simStats = null;
+let simPenaltyResult = null;
 
-// Radar dots & ball state
+// Engine & Renderer instances
+let matchEngine2D = null;
+let matchRenderer = null;
+
+// Radar dots & ball state (legacy aliases preserved)
 let simBluePlayers = [];
 let simRedPlayers = [];
-let simBall = { x: 207, y: 115, targetX: 207, targetY: 115 };
+let simBall = { x: 50, y: 50, targetX: 50, targetY: 50 };
 let simPlayPhase = 'IDLE'; // IDLE, BUILDUP, PROGRESSION, FINISHING, CELEBRATION
 let goalOverlayTimeout = null;
 let goalOverlayFadeTimeout = null;
@@ -2730,7 +3851,7 @@ function triggerSimGoalFlash() {
       overlay.classList.add('hidden');
       overlay.style.display = 'none';
     }, 300);
-  }, 1300);
+  }, 1200);
 }
 
 function getSimUserPlayer(slotIndex) {
@@ -2740,19 +3861,60 @@ function getSimUserPlayer(slotIndex) {
   return anyP || { name: 'ИГРОК', position: 'ST' };
 }
 
+function getSimUserGK() {
+  const gk = (simUserSquadPlayers || []).find(p => p && p.position === 'GK');
+  if (gk) return gk;
+  return getSimUserPlayer(10) || getSimUserPlayer(0);
+}
+
 function start2DSimulationMatch(tournId) {
+  // Stop any currently running simulation before starting a new one
+  stopSimLoops();
+  if (simTacticCooldownTimer) { clearInterval(simTacticCooldownTimer); simTacticCooldownTimer = null; }
+  simIsHalftimePause = false;
+  simAddedTime = Math.floor(Math.random() * 3) + 1; // 1-3 added minutes
+
+  // Close modals
+  const modalTourn = document.getElementById('modalTournaments');
+  if (modalTourn) modalTourn.classList.add('hidden');
+  const modalResult = document.getElementById('modalSimResult');
+  if (modalResult) modalResult.classList.add('hidden');
+  const modalPenalty = document.getElementById('modalPenaltyShootout');
+  if (modalPenalty) modalPenalty.classList.add('hidden');
+
+  // Ensure squad has valid 11 players
+  ensureValidSquad();
+
   tournId = tournId || save.activeTournamentId || 'pl';
   const tourn = TOURNAMENTS_CONFIG.find(t => t.id === tournId) || TOURNAMENTS_CONFIG[0];
   simCurrentTournament = tourn;
 
   const tState = (save.tournaments && save.tournaments[tourn.id]) || { stage: 0, won: false };
+  const stages = getTournamentStages(tourn.id);
   const curStageIdx = Math.min(2, tState.stage);
-  simCurrentStageInfo = tourn.stages[curStageIdx];
+  simCurrentStageInfo = stages[curStageIdx] || stages[0];
+
+  // Reset match statistics
+  simStats = {
+    userPoss: 50,
+    aiPoss: 50,
+    userShots: 0,
+    userShotsOnTarget: 0,
+    aiShots: 0,
+    aiShotsOnTarget: 0,
+    userFouls: 0,
+    aiFouls: 0,
+    userSaves: 0,
+    aiSaves: 0
+  };
+  simPenaltyResult = null;
 
   // Setup squad and mastery bonus
-  const squad = save.myClubSquad || [];
-  simUserSquadPlayers = squad.map(id => id ? PLAYERS_DB.find(p => p.id === id) : null);
-  simParticipatingPlayerIds = new Set(squad.filter(Boolean));
+  const squad = (myClubSquad && myClubSquad.length === 11 && myClubSquad[0]) 
+    ? myClubSquad 
+    : getValidMyClubSquad();
+  simUserSquadPlayers = squad.map(p => typeof p === 'string' ? PLAYERS_DB.find(pl => pl.id === p) : p);
+  simParticipatingPlayerIds = new Set(simUserSquadPlayers.map(p => p ? p.id : null).filter(Boolean));
   simUserScorers = [];
   simSubsUsed = 0;
   simUsedBenchIds = new Set();
@@ -2761,7 +3923,8 @@ function start2DSimulationMatch(tournId) {
   simIsPaused = false;
 
   // Apply Captain Bonus (+3 OVR)
-  const hasCaptain = save.myClubRoles && save.myClubRoles.captain && squad.includes(save.myClubRoles.captain);
+  const squadIds = simUserSquadPlayers.map(p => p ? p.id : null);
+  const hasCaptain = save.myClubRoles && save.myClubRoles.captain && squadIds.includes(save.myClubRoles.captain);
   const captainBonus = hasCaptain ? 3 : 0;
 
   const baseOvr = calcMyClubBaseRating() || 75;
@@ -2828,8 +3991,17 @@ function start2DSimulationMatch(tournId) {
   // Pre-schedule realistic events across 90 minutes
   buildSimTimeline();
 
-  // Initialize Radar dots geometry
-  initRadarDots();
+  // Initialize Match Engine 2D
+  if (!matchEngine2D) {
+    matchEngine2D = new MatchEngine2D();
+  }
+  const oppClub = (simCurrentStageInfo && simCurrentStageInfo.club) || 'Атлетик Бильбао';
+  const currentFormation = localStorage.getItem('myClubFormation') || save.myClubFormation || '4-2-3-1';
+  matchEngine2D.init(simUserSquadPlayers, oppClub, currentFormation, simCurrentTactic);
+
+  simBluePlayers = matchEngine2D.userPlayers;
+  simRedPlayers = matchEngine2D.oppPlayers;
+  simBall = matchEngine2D.ball;
 
   // Switch screen
   showScreen('screenSimMatch');
@@ -2860,16 +4032,34 @@ function buildSimTimeline() {
   simScheduledEvents = [];
   const eventMinutes = [7, 16, 24, 34, 42, 52, 60, 68, 77, 84, 88];
 
+  const squadPlayers = simUserSquadPlayers || [];
+  const striker = squadPlayers.find(p => p && (p.position === 'ST' || p.position === 'RW' || p.position === 'LW')) || squadPlayers[0];
+  const stUp = striker ? getPlayerUpgrade(striker.id) : {};
+  const shoBonus = (parseInt(stUp.sho, 10) || 0) * 0.008;
+
+  const gk = squadPlayers.find(p => p && p.position === 'GK') || squadPlayers[10];
+  const gkUp = gk ? getPlayerUpgrade(gk.id) : {};
+  const gkSaveBonus = ((parseInt(gkUp.div, 10) || 0) + (parseInt(gkUp.ref, 10) || 0)) * 0.006;
+
+  const defBonus = (squadPlayers.reduce((acc, p) => {
+    if (!p || p.position === 'GK') return acc;
+    const u = getPlayerUpgrade(p.id);
+    return acc + (parseInt(u.def, 10) || 0) + (parseInt(u.phy, 10) || 0);
+  }, 0)) * 0.001;
+
   eventMinutes.forEach(min => {
-    const userWeight = simUserOvr / (simUserOvr + simAiOvr);
+    const userWeight = Math.min(0.85, Math.max(0.15, simUserOvr / (simUserOvr + simAiOvr)));
     const rand = Math.random();
 
-    if (rand < 0.28 * (userWeight * 2)) {
+    const userGoalChance = 0.28 * (userWeight * 2) + shoBonus;
+    const aiGoalChance = Math.max(0.05, 0.25 * ((1 - userWeight) * 2) - gkSaveBonus - defBonus);
+
+    if (rand < userGoalChance) {
       simScheduledEvents.push({ minute: min, type: 'GOAL_USER' });
-    } else if (rand < 0.28 * (userWeight * 2) + 0.25 * ((1 - userWeight) * 2)) {
+    } else if (rand < userGoalChance + aiGoalChance) {
       simScheduledEvents.push({ minute: min, type: 'GOAL_AI' });
     } else if (rand < 0.65) {
-      simScheduledEvents.push({ minute: min, type: Math.random() < 0.5 ? 'SAVE_USER' : 'SAVE_AI' });
+      simScheduledEvents.push({ minute: min, type: Math.random() < (0.5 + gkSaveBonus) ? 'SAVE_USER' : 'SAVE_AI' });
     } else if (rand < 0.77) {
       simScheduledEvents.push({ minute: min, type: 'POST' });
     } else if (rand < 0.88) {
@@ -2880,61 +4070,6 @@ function buildSimTimeline() {
       simScheduledEvents.push({ minute: min, type: 'INJURY' });
     }
   });
-}
-
-function initRadarDots() {
-  // 11 Blue Team dots (User)
-  const blueBase = [
-    { x: 30,  y: 115, role: 'GK',  idx: 0 },
-    { x: 80,  y: 42,  role: 'LB',  idx: 1 },
-    { x: 74,  y: 88,  role: 'CB',  idx: 2 },
-    { x: 74,  y: 142, role: 'CB',  idx: 3 },
-    { x: 80,  y: 188, role: 'RB',  idx: 4 },
-    { x: 140, y: 65,  role: 'CM',  idx: 5 },
-    { x: 175, y: 115, role: 'CAM', idx: 6 },
-    { x: 140, y: 165, role: 'CM',  idx: 7 },
-    { x: 235, y: 45,  role: 'LW',  idx: 8 },
-    { x: 255, y: 115, role: 'ST',  idx: 9 },
-    { x: 235, y: 185, role: 'RW',  idx: 10 }
-  ];
-
-  simBluePlayers = blueBase.map(b => ({
-    ...b,
-    targetX: b.x,
-    targetY: b.y,
-    baseX: b.x,
-    baseY: b.y,
-    name: getSimUserPlayer(b.idx).name
-  }));
-
-  // 11 Red Team dots (Rival Grand Club)
-  const stars = (simCurrentStageInfo && simCurrentStageInfo.stars) || ['Звезда', 'Нападающий', 'Полузащитник'];
-  const redBase = [
-    { x: 384, y: 115, role: 'GK',  name: (simCurrentStageInfo && simCurrentStageInfo.gk) || 'Вратарь' },
-    { x: 334, y: 42,  role: 'RB',  name: stars[1] || 'Защитник' },
-    { x: 340, y: 88,  role: 'CB',  name: stars[2] || 'Защитник' },
-    { x: 340, y: 142, role: 'CB',  name: stars[3] || 'Защитник' },
-    { x: 334, y: 188, role: 'LB',  name: stars[4] || 'Защитник' },
-    { x: 274, y: 65,  role: 'CM',  name: stars[1] || 'Полузащитник' },
-    { x: 239, y: 115, role: 'CAM', name: stars[2] || 'Хавбек' },
-    { x: 274, y: 165, role: 'CM',  name: stars[3] || 'Полузащитник' },
-    { x: 179, y: 45,  role: 'RW',  name: stars[0] || 'Вингер' },
-    { x: 159, y: 115, role: 'ST',  name: stars[0] || 'Форвард' },
-    { x: 179, y: 185, role: 'LW',  name: stars[1] || 'Вингер' }
-  ];
-
-  simRedPlayers = redBase.map(r => ({
-    ...r,
-    targetX: r.x,
-    targetY: r.y,
-    baseX: r.x,
-    baseY: r.y
-  }));
-
-  // Ball at center
-  simBall = { x: 207, y: 115, targetX: 207, targetY: 115 };
-  simCarrier = { team: 'user', name: simBluePlayers[9].name, index: 9 };
-  simPlayPhase = 'IDLE';
 }
 
 function addSimFeedItem(minute, icon, text, extraClass = '') {
@@ -2960,244 +4095,1225 @@ function addSimFeedItem(minute, icon, text, extraClass = '') {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   3 ФАЗЫ АТАКИ И РОЗЫГРЫША МЯЧА
+   ТАКТИЧЕСКИЙ КУЛДАУН (5 СЕКУНД)
 ═══════════════════════════════════════════════════════════════════ */
-function run3PhaseAttack(team, outcome, min) {
-  simPlayPhase = 'BUILDUP';
-  const isUser = team === 'user';
-  const stars = (simCurrentStageInfo && simCurrentStageInfo.stars) || ['Звезда'];
-  const oppStar = stars[0] || 'Форвард';
-  const oppGk = (simCurrentStageInfo && simCurrentStageInfo.gk) || 'Вратарь';
+let simTacticCooldown = 0;
+let simTacticCooldownTimer = null;
 
-  // Check roles
-  const penaltyCardId = save.myClubRoles && save.myClubRoles.penalty;
-  const penPlayer = penaltyCardId ? PLAYERS_DB.find(p => p.id === penaltyCardId) : null;
-  const userSt = (outcome === 'PENALTY_USER' && penPlayer) ? penPlayer : getSimUserPlayer(9);
-  const userGk = getSimUserPlayer(0);
+function triggerTacticCooldown(seconds = 5) {
+  simTacticCooldown = seconds;
+  const bar = document.getElementById('simTacticsBar');
+  if (!bar) return;
+  const buttons = bar.querySelectorAll('.tactic-btn');
+  buttons.forEach(b => {
+    b.classList.add('cooldown');
+    b.disabled = true;
+    let badge = b.querySelector('.tactic-cooldown-badge');
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'tactic-cooldown-badge';
+      b.appendChild(badge);
+    }
+    badge.textContent = `${simTacticCooldown}s`;
+  });
 
-  // Phase 1: Buildup (Билдап)
-  if (isUser) {
-    const cb = simBluePlayers[2];
-    const cdm = simBluePlayers[5];
-    simCarrier = { team: 'user', name: cb.name, index: 2 };
-    simBall.targetX = cb.x;
-    simBall.targetY = cb.y;
+  if (simTacticCooldownTimer) clearInterval(simTacticCooldownTimer);
+  simTacticCooldownTimer = setInterval(() => {
+    simTacticCooldown--;
+    if (simTacticCooldown <= 0) {
+      clearInterval(simTacticCooldownTimer);
+      simTacticCooldown = 0;
+      buttons.forEach(b => {
+        b.classList.remove('cooldown');
+        b.disabled = false;
+        const badge = b.querySelector('.tactic-cooldown-badge');
+        if (badge) badge.remove();
+      });
+    } else {
+      buttons.forEach(b => {
+        const badge = b.querySelector('.tactic-cooldown-badge');
+        if (badge) badge.textContent = `${simTacticCooldown}s`;
+      });
+    }
+  }, 1000);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   MATCH ENGINE 2D — FSM SOCCER SIMULATION ENGINE
+   Pure math calculations in relative pitch coordinates (0 to 100).
+   - X: 0 (User Goal) -> 100 (Opponent Goal). Goal line User: 2.5. Goal line Opp: 97.5.
+   - Y: 0 (Top line) -> 100 (Bottom line). Center: (50, 50).
+   - Goals: Y in [41, 59].
+═══════════════════════════════════════════════════════════════════ */
+// Координаты поля строго в процентах от 0 до 100
+function clampPosition(x, y, isGK = false) {
+  // Для полевых игроков держим отступ от краев: X in [4, 96], Y in [6, 94] (GK in [2, 98])
+  const minX = isGK ? 2 : 4;
+  const maxX = isGK ? 98 : 96;
+  const minY = 6;
+  const maxY = 94;
+
+  return {
+    x: Math.max(minX, Math.min(maxX, x)),
+    y: Math.max(minY, Math.min(maxY, y))
+  };
+}
+
+class MatchSimEngine {
+  constructor() {
+    this.userPlayers = [];
+    this.oppPlayers = [];
+    this.players = [];
+    this.ball = {
+      x: 50,
+      y: 50,
+      vx: 0,
+      vy: 0,
+      carrier: null,
+      lastTouchTeam: 'user',
+      lastTouchPlayer: null,
+      flightType: 'none',
+      flightTarget: null
+    };
+    this.simTime = 0;
+    this.state = 'PLAYING';
+    this.goalPauseTimer = 0;
+    this.currentTactic = 'balance';
+    this.oppClubName = 'Соперник';
+    this.activePresser = null;
+    this.secondPresser = null;
+    this.userPossTicks = 50;
+    this.oppPossTicks = 50;
+  }
+
+  setTactic(tactic) {
+    this.currentTactic = tactic || 'balance';
+  }
+
+  init(userSquad, oppClubName, formationKey, tacticKey = 'balance') {
+    this.oppClubName = oppClubName || 'Соперник';
+    this.currentTactic = tacticKey;
+    this.state = 'PLAYING';
+    this.goalPauseTimer = 0;
+    this.simTime = 0;
+    this.userPossTicks = 50;
+    this.oppPossTicks = 50;
+
+    const oppRoster = getOpponentRoster(this.oppClubName);
+    const structure = FORMATIONS[formationKey] || [1, 3, 2, 4, 1];
+
+    const userSlots = this.calcSlots(structure, 'user');
+    const oppSlots = this.calcSlots([3, 3, 4, 1], 'opp');
+
+    this.userPlayers = userSlots.map((slot, idx) => {
+      const card = userSquad[idx] || (idx === 10 ? { name: 'Вратарь', position: 'GK' } : { name: `Игрок ${idx + 1}`, position: slot.role });
+      const stats = this.extractStats(card, slot.role);
+      const isGK = slot.role === 'GK';
+      const cl = clampPosition(slot.baseX, slot.baseY, isGK);
+      return {
+        id: card.id || `u_${idx}`,
+        name: card.name || `Игрок ${idx + 1}`,
+        team: 'user',
+        role: slot.role,
+        slotIdx: idx,
+        index: idx,
+        x: cl.x,
+        y: cl.y,
+        vx: 0,
+        vy: 0,
+        baseX: cl.x,
+        baseY: cl.y,
+        targetX: cl.x,
+        targetY: cl.y,
+        state: 'STATE_OFF_BALL',
+        stats: stats,
+        speed: 8.5 + (stats.pac / 100) * 7.5,
+        holdTimer: 0,
+        maxHoldTime: isGK ? 1.0 : (1.2 + Math.random() * 0.6),
+        tackleImmunity: 0
+      };
+    });
+
+    const oppGkCard = oppRoster.find(c => c.role === 'GK') || oppRoster[0] || { name: 'Вратарь', role: 'GK' };
+    const oppDefenders = oppRoster.filter(c => ['CB', 'LB', 'RB', 'LWB', 'RWB', 'DEF'].includes(c.role));
+    const oppMidfielders = oppRoster.filter(c => ['CM', 'CAM', 'CDM', 'LM', 'RM', 'MID'].includes(c.role));
+    const oppAttackers = oppRoster.filter(c => ['ST', 'LW', 'RW', 'CF', 'ATT'].includes(c.role));
+
+    let defIdx = 0, midIdx = 0, attIdx = 0;
+
+    this.oppPlayers = oppSlots.map((slot, idx) => {
+      const isGK = slot.role === 'GK';
+      let oppCard = null;
+      if (isGK) {
+        oppCard = oppGkCard;
+      } else if (['ST', 'LW', 'RW', 'ATT'].includes(slot.role)) {
+        oppCard = oppAttackers[attIdx++] || oppRoster[idx];
+      } else if (['CB', 'LB', 'RB', 'DEF'].includes(slot.role)) {
+        oppCard = oppDefenders[defIdx++] || oppRoster[idx];
+      } else {
+        oppCard = oppMidfielders[midIdx++] || oppRoster[idx];
+      }
+      if (!oppCard) oppCard = { name: `Соперник ${idx + 1}`, role: slot.role };
+
+      const oppOvr = (typeof simAiOvr === 'number' && simAiOvr > 0) ? simAiOvr : 82;
+      const stats = {
+        pac: oppOvr + Math.floor(Math.random() * 6 - 3),
+        sho: oppOvr + Math.floor(Math.random() * 6 - 3),
+        pas: oppOvr + Math.floor(Math.random() * 6 - 3),
+        dri: oppOvr + Math.floor(Math.random() * 6 - 3),
+        def: oppOvr + Math.floor(Math.random() * 6 - 3),
+        phy: oppOvr + Math.floor(Math.random() * 6 - 3),
+        div: oppOvr + Math.floor(Math.random() * 6 - 3),
+        han: oppOvr + Math.floor(Math.random() * 6 - 3),
+        kic: oppOvr + Math.floor(Math.random() * 6 - 3),
+        ref: oppOvr + Math.floor(Math.random() * 6 - 3),
+        pos: oppOvr + Math.floor(Math.random() * 6 - 3)
+      };
+      const cl = clampPosition(slot.baseX, slot.baseY, isGK);
+      return {
+        id: `opp_${idx}`,
+        name: oppCard.name,
+        team: 'opp',
+        role: oppCard.role || slot.role,
+        slotIdx: idx,
+        index: idx,
+        x: cl.x,
+        y: cl.y,
+        vx: 0,
+        vy: 0,
+        baseX: cl.x,
+        baseY: cl.y,
+        targetX: cl.x,
+        targetY: cl.y,
+        state: 'STATE_OFF_BALL',
+        stats: stats,
+        speed: 8.5 + (stats.pac / 100) * 7.5,
+        holdTimer: 0,
+        maxHoldTime: isGK ? 1.0 : (1.2 + Math.random() * 0.6),
+        tackleImmunity: 0
+      };
+    });
+
+    this.players = [...this.userPlayers, ...this.oppPlayers];
+    this.resetKickoff('user', true);
+  }
+
+  calcSlots(structure, team) {
+    const isUser = team === 'user';
+    const lineCount = structure.length;
+    const slots = [];
+
+    const userLineX = lineCount === 4
+      ? [68, 46, 22, 6]
+      : [70, 52, 38, 22, 6];
+
+    let pIdx = 0;
+    for (let l = 0; l < lineCount; l++) {
+      const count = structure[l];
+      const ux = userLineX[l];
+      const lineX = isUser ? ux : (100 - ux);
+
+      const step = 64 / (count + 1);
+      for (let c = 0; c < count; c++) {
+        const y = 18 + step * (c + 1);
+        let role = 'MID';
+        if (l === lineCount - 1) role = 'GK';
+        else if (l === lineCount - 2) {
+          if (count === 3) role = 'CB';
+          else if (count === 4) role = (c === 0 ? 'LB' : (c === 3 ? 'RB' : 'CB'));
+          else if (count === 5) role = (c === 0 ? 'LWB' : (c === 4 ? 'RWB' : 'CB'));
+          else role = 'DEF';
+        } else if (l === 0) {
+          if (count === 1) role = 'ST';
+          else if (count === 3) role = (c === 0 ? 'LW' : (c === 2 ? 'RW' : 'ST'));
+          else role = 'ST';
+        } else {
+          if (count === 1) role = 'CAM';
+          else if (count === 2) role = 'CDM';
+          else if (count === 3) role = (c === 0 ? 'LM' : (c === 2 ? 'RM' : 'CM'));
+          else role = (c === 0 ? 'LM' : (c === count - 1 ? 'RM' : 'CM'));
+        }
+
+        const cl = clampPosition(lineX, y, role === 'GK');
+        slots.push({ baseX: cl.x, baseY: cl.y, role, idx: pIdx++ });
+      }
+    }
+    return slots;
+  }
+
+  extractStats(card, role) {
+    const up = card && card.id ? getPlayerUpgrade(card.id) : {};
+    const base = card && card.stats ? card.stats : {};
+    const isGK = role === 'GK' || (card && card.position === 'GK');
+
+    // In "МОЙ КЛУБ": Every invested point from playerTrainingData grants +1.8 to the actual in-game attribute
+    const calcStat = (baseVal, upVal) => {
+      const b = parseInt(baseVal, 10) || 75;
+      const u = parseInt(upVal, 10) || 0;
+      return b + Math.round(u * 1.8);
+    };
+
+    if (isGK) {
+      return {
+        pac: calcStat(base.pac || 62, up.pos || 0),
+        sho: calcStat(base.sho || 45, 0),
+        pas: calcStat(base.pas || 68, up.kic || 0),
+        dri: calcStat(base.dri || 55, 0),
+        def: calcStat(base.def || 82, up.pos || 0),
+        phy: calcStat(base.phy || 75, up.han || 0),
+        div: calcStat(base.div || base.def || 78, up.div || 0),
+        han: calcStat(base.han || 75, up.han || 0),
+        kic: calcStat(base.kic || 72, up.kic || 0),
+        ref: calcStat(base.ref || base.def || 80, up.ref || 0),
+        pos: calcStat(base.pos || 76, up.pos || 0)
+      };
+    }
+
+    return {
+      pac: calcStat(base.pac, up.pac),
+      sho: calcStat(base.sho, up.sho),
+      pas: calcStat(base.pas, up.pas),
+      dri: calcStat(base.dri, up.pas),
+      def: calcStat(base.def, up.def),
+      phy: calcStat(base.phy, up.phy),
+      div: 70,
+      han: 70,
+      kic: 70,
+      ref: 70,
+      pos: 70
+    };
+  }
+
+  substituteUserPlayer(slotIndex, subPlayer) {
+    if (!this.userPlayers[slotIndex]) return;
+    const oldP = this.userPlayers[slotIndex];
+    const stats = this.extractStats(subPlayer, oldP.role);
+    this.userPlayers[slotIndex] = {
+      ...oldP,
+      id: subPlayer.id,
+      name: subPlayer.name,
+      stats: stats,
+      speed: 8.5 + (stats.pac / 100) * 7.5
+    };
+    this.players = [...this.userPlayers, ...this.oppPlayers];
+  }
+
+  resetKickoff(kickingTeam, isInitial = false) {
+    this.state = 'PLAYING';
+    this.goalPauseTimer = 0;
+
+    // Reset base positions
+    this.players.forEach(p => {
+      p.x = p.baseX;
+      p.y = p.baseY;
+      p.vx = 0;
+      p.vy = 0;
+      p.state = 'STATE_OFF_BALL';
+      p.holdTimer = 0;
+      p.tackleImmunity = 0;
+    });
+
+    const isUser = kickingTeam === 'user';
+    const kickers = isUser ? this.userPlayers : this.oppPlayers;
+    const starter = kickers.find(p => p.role === 'ST') || kickers[0];
+
+    starter.x = isUser ? 48.5 : 51.5;
+    starter.y = 50;
+
+    this.ball.x = starter.x;
+    this.ball.y = starter.y;
+    this.ball.vx = 0;
+    this.ball.vy = 0;
+    this.ball.flightType = 'none';
+    this.ball.flightTarget = null;
+    this.receiveBall(starter);
+  }
+
+  triggerGoal(scoringTeam) {
+    this.state = 'GOAL_PAUSE';
+    this.goalPauseTimer = 2.2; // Комфортная пауза 2.2с после гола
+    this.ball.carrier = null;
+    this.ball.flightType = 'none';
+    this.ball.flightTarget = null;
+
+    if (scoringTeam === 'user') {
+      this.ball.x = 99.0;
+      this.ball.y = 50;
+      this.ball.vx = 0;
+      this.ball.vy = 0;
+      simScoreUser++;
+      if (simStats) {
+        simStats.userShots++;
+        simStats.userShotsOnTarget++;
+      }
+      const scorer = this.ball.lastTouchPlayer || this.userPlayers.find(p => p.role === 'ST') || this.userPlayers[0];
+      if (scorer && scorer.id) simUserScorers.push(scorer.id);
+
+      triggerSimGoalFlash();
+      burstParticles();
+      updateSimScoreboard();
+      addSimFeedItem(simMinute, '⚽', `ГООООЛ! ${scorer.name} вколачивает мяч в сетку ворот «${this.oppClubName}»! (${simScoreUser}:${simScoreAi})`, 'sim-feed-item--goal-user');
+    } else {
+      this.ball.x = 1.0;
+      this.ball.y = 50;
+      this.ball.vx = 0;
+      this.ball.vy = 0;
+      simScoreAi++;
+      if (simStats) {
+        simStats.aiShots++;
+        simStats.aiShotsOnTarget++;
+      }
+      const oppScorer = this.ball.lastTouchPlayer || this.oppPlayers.find(p => p.role === 'ST') || this.oppPlayers[0];
+
+      triggerSimGoalFlash();
+      updateSimScoreboard();
+      addSimFeedItem(simMinute, '⚽', `ГОЛ! ${oppScorer.name} забивает в наши ворота! (${simScoreUser}:${simScoreAi})`, 'sim-feed-item--goal-ai');
+    }
+  }
+
+  injectAttackOpportunity(team, type) {
+    if (this.state !== 'PLAYING') return;
+    const isUser = team === 'user';
+    const attackers = isUser ? this.userPlayers : this.oppPlayers;
+    const st = attackers.find(p => p.role === 'ST' || p.role === 'ATT') || attackers[0];
+    const wing = attackers.find(p => ['LW', 'RW', 'LM', 'RM'].includes(p.role)) || attackers[1] || st;
+    const targetPlayer = type === 'GOAL' ? st : wing;
+
+    targetPlayer.x = isUser ? (type === 'GOAL' ? 82 : 78) : (type === 'GOAL' ? 18 : 22);
+    targetPlayer.y = 50 + (Math.random() * 16 - 8);
+
+    this.receiveBall(targetPlayer);
+
     setTimeout(() => {
-      if (!simRunning) return;
-      simCarrier = { team: 'user', name: cdm.name, index: 5 };
-      simBall.targetX = cdm.x;
-      simBall.targetY = cdm.y;
-    }, 450);
-  } else {
-    const rcb = simRedPlayers[2];
-    const rcm = simRedPlayers[5];
-    simCarrier = { team: 'ai', name: rcb.name, index: 2 };
-    simBall.targetX = rcb.x;
-    simBall.targetY = rcb.y;
-    setTimeout(() => {
-      if (!simRunning) return;
-      simCarrier = { team: 'ai', name: rcm.name, index: 5 };
-      simBall.targetX = rcm.x;
-      simBall.targetY = rcm.y;
+      if (this.state === 'PLAYING' && this.ball.carrier === targetPlayer) {
+        this.executeShot(targetPlayer);
+      }
     }, 450);
   }
 
-  // Phase 2: Progression (Развитие) at 850ms
-  setTimeout(() => {
-    if (!simRunning) return;
-    simPlayPhase = 'PROGRESSION';
+  distPointToSegment(px, py, x1, y1, x2, y2) {
+    const l2 = (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1);
+    if (l2 === 0) return Math.hypot(px - x1, py - y1);
+    let t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (x1 + t * (x2 - x1)), py - (y1 + t * (y2 - y1)));
+  }
+
+  receiveBall(p) {
+    if (!p) return;
+    if (this.ball.carrier && this.ball.carrier !== p) {
+      this.ball.carrier.state = 'STATE_OFF_BALL';
+      this.ball.carrier.holdTimer = 0;
+    }
+    this.ball.carrier = p;
+    p.state = 'STATE_ON_BALL';
+    p.holdTimer = 0;
+    this.ball.lastTouchTeam = p.team;
+    this.ball.lastTouchPlayer = p;
+    this.ball.flightType = 'none';
+    this.ball.flightTarget = null;
+    this.ball.vx = 0;
+    this.ball.vy = 0;
+    this.ball.x = p.x;
+    this.ball.y = p.y;
+
+    if (p.role === 'GK') {
+      p.maxHoldTime = 1.0;
+      p.tackleImmunity = 999;
+    } else {
+      p.maxHoldTime = 1.2 + Math.random() * 0.6; // 1.2 - 1.8с на обработку и дриблинг
+      p.tackleImmunity = 0.55;
+    }
+  }
+
+  giveBallToGK(gk) {
+    if (!gk) return;
+    const isUser = gk.team === 'user';
+    gk.x = isUser ? 3.5 : 96.5;
+    gk.y = 50;
+    this.receiveBall(gk);
+  }
+
+  executeGKPass(gk) {
+    const isUser = gk.team === 'user';
+    const teammates = (isUser ? this.userPlayers : this.oppPlayers).filter(p => p !== gk);
+    const opponents = (isUser ? this.oppPlayers : this.userPlayers).filter(p => p.role !== 'GK');
+
+    // Кристальная логика голкипера: вынос открытому партнеру в центральную зону (X: 30 - 55)
+    let bestCandidate = null;
+    let bestScore = -Infinity;
+
+    teammates.forEach(tm => {
+      let minOppDist = Infinity;
+      opponents.forEach(op => {
+        const d = Math.hypot(op.x - tm.x, op.y - tm.y);
+        if (d < minOppDist) minOppDist = d;
+      });
+
+      const inCentralZone = tm.x >= 30 && tm.x <= 70;
+      let score = minOppDist * 2.0;
+      if (inCentralZone) score += 35;
+      if (['CM', 'CDM', 'CAM'].includes(tm.role)) score += 20;
+      if (['LW', 'RW', 'LM', 'RM'].includes(tm.role)) score += 15;
+      score += Math.random() * 10;
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestCandidate = tm;
+      }
+    });
+
+    const target = bestCandidate || teammates[1] || teammates[0];
+    this.executePass(gk, target);
+  }
+
+  executeSmartPass(carrier) {
+    const isUser = carrier.team === 'user';
+    const teammates = (isUser ? this.userPlayers : this.oppPlayers).filter(p => p !== carrier && p.role !== 'GK');
+    const opponents = (isUser ? this.oppPlayers : this.userPlayers).filter(p => p.role !== 'GK');
+    const inCentralThird = carrier.x >= 30 && carrier.x <= 70;
+
+    let bestCandidate = null;
+    let bestScore = -Infinity;
+
+    teammates.forEach(tm => {
+      // 1. Продвижение вперед
+      const progress = isUser ? (tm.x - carrier.x) : (carrier.x - tm.x);
+
+      // 2. Свободное пространство вокруг адресата
+      let minOppDist = Infinity;
+      opponents.forEach(op => {
+        const d = Math.hypot(op.x - tm.x, op.y - tm.y);
+        if (d < minOppDist) minOppDist = d;
+      });
+
+      // 3. Препятствия на линии передачи
+      let minLineDist = Infinity;
+      opponents.forEach(op => {
+        const ld = this.distPointToSegment(op.x, op.y, carrier.x, carrier.y, tm.x, tm.y);
+        if (ld < minLineDist) minLineDist = ld;
+      });
+
+      const passDist = Math.hypot(tm.x - carrier.x, tm.y - carrier.y);
+
+      let score = 50;
+      score += progress * 1.5;
+      score += Math.min(minOppDist, 14) * 2.2;
+      if (minLineDist < 4.5) {
+        score -= (4.5 - minLineDist) * 16;
+      }
+
+      // В центральной трети поля приоритет комбинациям: полузащита, опорники, фланги
+      if (inCentralThird) {
+        if (['CM', 'CDM', 'CAM', 'LM', 'RM'].includes(tm.role)) score += 20;
+        if (['LW', 'RW'].includes(tm.role)) score += 16;
+        if (tm.role === 'ST' && progress > 22 && minOppDist < 8.0) score -= 18;
+      } else {
+        if (['ST', 'LW', 'RW'].includes(tm.role) && progress > 3.0) score += 18;
+        if (['CAM', 'CM'].includes(tm.role)) score += 10;
+      }
+
+      if (passDist < 6) score -= 25; // Слишком близко
+      if (passDist > 55) score -= (passDist - 55) * 1.5; // Слишком далеко
+      score += Math.random() * 18; // Естественная вариативность
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestCandidate = tm;
+      }
+    });
+
+    // Гарантированный запасной адресат
+    if (!bestCandidate) {
+      let maxDist = -1;
+      teammates.forEach(tm => {
+        let minD = Infinity;
+        opponents.forEach(op => {
+          const d = Math.hypot(op.x - tm.x, op.y - tm.y);
+          if (d < minD) minD = d;
+        });
+        if (minD > maxDist) {
+          maxDist = minD;
+          bestCandidate = tm;
+        }
+      });
+    }
+
+    const receiver = bestCandidate || teammates[0];
+    this.executePass(carrier, receiver);
+  }
+
+  executePass(carrier, receiver) {
+    if (!carrier || !receiver) return;
+    this.ball.carrier = null;
+    carrier.state = 'STATE_OFF_BALL';
+    carrier.holdTimer = 0;
+    this.ball.flightType = 'pass';
+    this.ball.lastTouchTeam = carrier.team;
+    this.ball.lastTouchPlayer = carrier;
+
+    const isUser = receiver.team === 'user';
+    const leadX = isUser ? Math.min(3.0, (receiver.stats.pac || 75) * 0.025) : -Math.min(3.0, (receiver.stats.pac || 75) * 0.025);
+    const targetX = clampPosition(receiver.x + leadX, receiver.y, false).x;
+    const targetY = receiver.y;
+
+    this.ball.flightTarget = { x: targetX, y: targetY, receiver };
+
+    const pas = carrier.stats.pas || 75;
+    // Снижение скорости полета мяча на 30% (32 - 47 %/сек) для четкой читаемости передачи
+    const passSpeed = 32 + (pas / 100) * 15;
+    const dx = targetX - carrier.x;
+    const dy = targetY - carrier.y;
+    const d = Math.hypot(dx, dy) || 1;
+
+    this.ball.vx = (dx / d) * passSpeed;
+    this.ball.vy = (dy / d) * passSpeed;
+  }
+
+  executeShot(shooter) {
+    if (!shooter) return;
+    this.ball.carrier = null;
+    shooter.state = 'STATE_OFF_BALL';
+    shooter.holdTimer = 0;
+    this.ball.flightType = 'shot';
+    this.ball.lastTouchTeam = shooter.team;
+    this.ball.lastTouchPlayer = shooter;
+
+    const isUser = shooter.team === 'user';
+    const goalX = isUser ? 99.0 : 1.0;
+    const sho = shooter.stats.sho || 75;
+    const oppGk = (isUser ? this.oppPlayers : this.userPlayers).find(p => p.role === 'GK');
+    const gkStat = oppGk ? (((oppGk.stats.div || 75) + (oppGk.stats.ref || 75)) / 2) : 78;
 
     if (isUser) {
-      const striker = simBluePlayers[9];
-      striker.targetX = 335;
-      striker.targetY = 115 + (Math.random() * 20 - 10);
-      simCarrier = { team: 'user', name: userSt.name, index: 9 };
-      simBall.targetX = striker.targetX;
-      simBall.targetY = striker.targetY;
-      simRedPlayers.slice(1, 5).forEach(d => { d.targetX = 355; });
+      if (simStats) simStats.userShots++;
     } else {
-      const rivalStriker = simRedPlayers[9];
-      rivalStriker.targetX = 75;
-      rivalStriker.targetY = 115 + (Math.random() * 20 - 10);
-      simCarrier = { team: 'ai', name: oppStar, index: 9 };
-      simBall.targetX = rivalStriker.targetX;
-      simBall.targetY = rivalStriker.targetY;
-      simBluePlayers.slice(1, 5).forEach(d => { d.targetX = 55; });
+      if (simStats) simStats.aiShots++;
     }
-  }, 900);
 
-  // Phase 3: Finishing (Завершение) at 1700ms
-  setTimeout(() => {
-    if (!simRunning) return;
-    simPlayPhase = 'FINISHING';
+    const shotSpeed = 44 + (sho / 100) * 18;
 
-    if (outcome === 'GOAL_USER' || outcome === 'PENALTY_USER') {
-      simBall.targetX = 406;
-      simBall.targetY = 115 + (Math.random() * 18 - 9);
-      simRedPlayers[0].targetY = simBall.targetY > 115 ? 128 : 102;
+    // Сбалансированное распределение исходов ударов:
+    // ~16-22% ГОЛ, ~28% Промах/Блок/Штанга, ~52-56% Сейв вратаря
+    const goalProb = Math.max(0.12, Math.min(0.25, 0.18 + ((sho - gkStat) / 200) * 0.16));
+    const missProb = 0.28;
+    const roll = Math.random();
 
-      // Ball enters net behind GK
-      setTimeout(() => {
-        if (!simRunning) return;
-        simScoreUser++;
-        updateSimScoreboard();
-        triggerSimGoalFlash();
-        burstParticles();
+    if (roll < goalProb) {
+      // 1. ГОЛ! (~18-22%)
+      if (isUser) {
+        if (simStats) simStats.userShotsOnTarget++;
+      } else {
+        if (simStats) simStats.aiShotsOnTarget++;
+      }
+      const goalY = 50 + (Math.random() < 0.5 ? -6.2 : 6.2);
+      const dx = goalX - shooter.x;
+      const dy = goalY - shooter.y;
+      const d = Math.hypot(dx, dy) || 1;
 
-        if (userSt && userSt.id) simUserScorers.push(userSt.id);
+      this.ball.vx = (dx / d) * (shotSpeed * 1.15);
+      this.ball.vy = (dy / d) * (shotSpeed * 1.15);
+      this.ball.flightTarget = { x: goalX, y: goalY, isGoal: true, scoringTeam: shooter.team };
+    } else if (roll < goalProb + missProb) {
+      // 2. ПРОМАХ / БЛОК / ШТАНГА (~28%)
+      const isPost = Math.random() < 0.35;
+      const missY = isPost ? (50 + (Math.random() < 0.5 ? -10.5 : 10.5)) : (50 + (Math.random() < 0.5 ? -17 : 17));
+      const targetX = goalX;
+      const dx = targetX - shooter.x;
+      const dy = missY - shooter.y;
+      const d = Math.hypot(dx, dy) || 1;
 
-        if (outcome === 'PENALTY_USER') {
-          addSimFeedItem(min, '🎯', `ПЕНАЛЬТИ! Штатный пенальтист ${userSt.name} хладнокровно разводит вратаря и мяч по углам! (Счёт ${simScoreUser}:${simScoreAi})`, 'sim-feed-item--goal-user');
+      this.ball.vx = (dx / d) * shotSpeed;
+      this.ball.vy = (dy / d) * shotSpeed;
+      this.ball.flightTarget = { x: targetX, y: missY, isMiss: true, isPost: isPost, gk: oppGk };
+
+      if (isPost) {
+        addSimFeedItem(simMinute, '🎯', `Опаснейший момент! Мяч сотрясает каркас ворот!`, 'sim-feed-item--post');
+      } else {
+        const isBlock = Math.random() < 0.5;
+        if (isBlock) {
+          addSimFeedItem(simMinute, '🛡️', `Удар заблокирован плотной обороной!`, 'sim-feed-item--block');
         } else {
-          addSimFeedItem(min, '⚽', `ГОЛ! ${userSt.name} поражает ворота «${simCurrentStageInfo.club}»! (Счёт ${simScoreUser}:${simScoreAi})`, 'sim-feed-item--goal-user');
+          addSimFeedItem(simMinute, '💨', `Мяч после мощного удара просвистел рядом со штангой!`, 'sim-feed-item--miss');
+        }
+      }
+    } else {
+      // 3. СЕЙВ ВРАТАРЯ (~52-56%)
+      if (isUser) {
+        if (simStats) simStats.userShotsOnTarget++;
+      } else {
+        if (simStats) simStats.aiShotsOnTarget++;
+      }
+      const targetX = oppGk ? oppGk.x : goalX;
+      const targetY = oppGk ? oppGk.y : 50;
+      const dx = targetX - shooter.x;
+      const dy = targetY - shooter.y;
+      const d = Math.hypot(dx, dy) || 1;
+
+      this.ball.vx = (dx / d) * shotSpeed;
+      this.ball.vy = (dy / d) * shotSpeed;
+      this.ball.flightTarget = { x: targetX, y: targetY, isSave: true, gk: oppGk };
+
+      if (oppGk) {
+        if (oppGk.team === 'user') {
+          if (simStats) simStats.userSaves++;
+          addSimFeedItem(simMinute, '🧤', `СЕЙВ! Наш вратарь ${oppGk.name} спасает ворота в красивом прыжке!`, 'sim-feed-item--save');
+        } else {
+          if (simStats) simStats.aiSaves++;
+          addSimFeedItem(simMinute, '🧤', `СЕЙВ! Вратарь «${this.oppClubName}» ${oppGk.name} парирует мощный удар!`, 'sim-feed-item--save');
+        }
+      }
+    }
+  }
+
+  updateCarrier(dt) {
+    const carrier = this.ball.carrier;
+    if (!carrier) return;
+
+    carrier.holdTimer += dt;
+    if (carrier.tackleImmunity > 0) carrier.tackleImmunity -= dt;
+
+    // Вратарь держит мяч 1.0с
+    if (carrier.role === 'GK') {
+      if (carrier.holdTimer >= 1.0) {
+        this.executeGKPass(carrier);
+      }
+      return;
+    }
+
+    // Полевой игрок
+    const isUser = carrier.team === 'user';
+    const opponents = isUser ? this.oppPlayers : this.userPlayers;
+
+    let minOppDist = Infinity;
+    opponents.forEach(op => {
+      if (op.role === 'GK') return;
+      const d = Math.hypot(op.x - carrier.x, op.y - carrier.y);
+      if (d < minOppDist) minOppDist = d;
+    });
+
+    const inShootingZone = isUser ? (carrier.x >= 74) : (carrier.x <= 26);
+    const mustAct = carrier.holdTimer >= carrier.maxHoldTime || minOppDist < 4.8;
+
+    if (inShootingZone && (carrier.holdTimer >= 0.5 || minOppDist < 4.8)) {
+      this.executeShot(carrier);
+    } else if (mustAct) {
+      this.executeSmartPass(carrier);
+    }
+  }
+
+  updateBall(dt) {
+    if (this.ball.carrier) {
+      this.ball.x = this.ball.carrier.x;
+      this.ball.y = this.ball.carrier.y;
+      this.ball.vx = 0;
+      this.ball.vy = 0;
+      return;
+    }
+
+    this.ball.x += this.ball.vx * dt;
+    this.ball.y += this.ball.vy * dt;
+
+    // Проверка границ поля
+    if (this.ball.x <= 2.5 || this.ball.x >= 97.5 || this.ball.y <= 4 || this.ball.y >= 96) {
+      if (this.ball.y >= 41 && this.ball.y <= 59) {
+        if (this.ball.x >= 96.5) {
+          this.triggerGoal('user');
+          return;
+        } else if (this.ball.x <= 3.5) {
+          this.triggerGoal('opp');
+          return;
+        }
+      }
+      // Мяч ушел за пределы поля -> от ворот
+      if (this.ball.x <= 50) {
+        this.giveBallToGK(this.userPlayers.find(p => p.role === 'GK'));
+      } else {
+        this.giveBallToGK(this.oppPlayers.find(p => p.role === 'GK'));
+      }
+      return;
+    }
+
+    // Достижение цели полета
+    if (this.ball.flightTarget) {
+      const ft = this.ball.flightTarget;
+      const distToTarget = Math.hypot(ft.x - this.ball.x, ft.y - this.ball.y);
+
+      if (ft.isGoal && (distToTarget < 3.0 || (ft.scoringTeam === 'user' ? this.ball.x >= 97.0 : this.ball.x <= 3.0))) {
+        this.triggerGoal(ft.scoringTeam);
+        return;
+      }
+
+      if (ft.isMiss && (distToTarget < 4.0 || (ft.gk && (ft.gk.team === 'user' ? this.ball.x <= 4.0 : this.ball.x >= 96.0)))) {
+        if (ft.gk) this.giveBallToGK(ft.gk);
+        else this.giveBallToGK((this.ball.lastTouchTeam === 'user' ? this.oppPlayers : this.userPlayers).find(p => p.role === 'GK'));
+        return;
+      }
+
+      if (ft.isSave && distToTarget < 4.0) {
+        if (ft.gk) this.receiveBall(ft.gk);
+        else this.giveBallToGK((this.ball.lastTouchTeam === 'user' ? this.oppPlayers : this.userPlayers).find(p => p.role === 'GK'));
+        return;
+      }
+
+      if (ft.receiver && distToTarget < 4.0) {
+        this.receiveBall(ft.receiver);
+        return;
+      }
+    }
+
+    // Повышенный шанс перехвата передач в центре поля (+20-25%)
+    if (this.ball.flightType === 'pass') {
+      const opponents = (this.ball.lastTouchTeam === 'user' ? this.oppPlayers : this.userPlayers).filter(p => p.role !== 'GK');
+      const inCenter = this.ball.x >= 28 && this.ball.x <= 72;
+      const bonusMidfield = inCenter ? 0.08 : 0;
+
+      for (const op of opponents) {
+        const d = Math.hypot(op.x - this.ball.x, op.y - this.ball.y);
+        if (d < 3.4) {
+          const passerPas = this.ball.lastTouchPlayer && this.ball.lastTouchPlayer.stats ? this.ball.lastTouchPlayer.stats.pas : 75;
+          const defStat = op.stats.def || 75;
+          const interceptChance = 0.28 + bonusMidfield + ((defStat - passerPas) / 200) * 0.25;
+          if (Math.random() < Math.max(0.18, Math.min(0.58, interceptChance))) {
+            this.receiveBall(op);
+            return;
+          }
+        }
+      }
+    }
+
+    // Подбор катящегося / ничейного мяча
+    const speed = Math.hypot(this.ball.vx, this.ball.vy);
+    if (speed < 10.0) {
+      let nearest = null;
+      let minD = Infinity;
+      for (const p of this.players) {
+        const d = Math.hypot(p.x - this.ball.x, p.y - this.ball.y);
+        if (d < minD) {
+          minD = d;
+          nearest = p;
+        }
+      }
+      if (nearest && minD < 4.5) {
+        this.receiveBall(nearest);
+      }
+    }
+  }
+
+  updatePressers() {
+    const carrier = this.ball.carrier;
+    if (!carrier || carrier.role === 'GK') {
+      this.activePresser = null;
+      this.secondPresser = null;
+      return;
+    }
+
+    const opponents = (carrier.team === 'user' ? this.oppPlayers : this.userPlayers).filter(p => p.role !== 'GK');
+    opponents.sort((a, b) => Math.hypot(a.x - carrier.x, a.y - carrier.y) - Math.hypot(b.x - carrier.x, b.y - carrier.y));
+
+    this.activePresser = opponents[0] || null;
+    this.secondPresser = opponents[1] || null;
+  }
+
+  updatePlayers(dt) {
+    // Командный сдвиг за мячом
+    const shiftX = (this.ball.x - 50) * 0.42;
+    const shiftY = (this.ball.y - 50) * 0.22;
+    const tacticOffset = this.currentTactic === 'bus' ? -10 : (this.currentTactic === 'press' ? 10 : 0);
+
+    this.players.forEach(p => {
+      // 1. Вратари
+      if (p.role === 'GK') {
+        const isUser = p.team === 'user';
+        p.targetX = isUser ? 3.5 : 96.5;
+        p.targetY = 50 + (this.ball.y - 50) * 0.45;
+        p.targetY = Math.max(40, Math.min(60, p.targetY));
+
+        // Подбор бесхозного мяча в штрафной
+        if (!this.ball.carrier && this.ball.flightType === 'none' && this.ball.lastTouchPlayer !== p && Math.hypot(p.x - this.ball.x, p.y - this.ball.y) < 7.0) {
+          this.receiveBall(p);
         }
 
-        simPlayPhase = 'CELEBRATION';
-        setTimeout(() => {
-          if (!simRunning) return;
-          resetRadarToCenter();
-          simPlayPhase = 'IDLE';
-        }, 1200);
-      }, 450);
+        const moveX = (p.targetX - p.x) * Math.min(1.0, 8 * dt);
+        const moveY = (p.targetY - p.y) * Math.min(1.0, 8 * dt);
+        p.x += moveX;
+        p.y += moveY;
+        const cl = clampPosition(p.x, p.y, true);
+        p.x = cl.x;
+        p.y = cl.y;
+        return;
+      }
 
-    } else if (outcome === 'GOAL_AI') {
-      simBall.targetX = 8;
-      simBall.targetY = 115 + (Math.random() * 18 - 9);
-      simBluePlayers[0].targetY = simBall.targetY > 115 ? 128 : 102;
+      // 2. Дриблинг игрока с мячом (плавный темп)
+      if (p === this.ball.carrier) {
+        const isUser = p.team === 'user';
+        const targetX = isUser ? p.x + 6 : p.x - 6;
+        const targetY = p.y + Math.sin(this.simTime * 2.5) * 1.2;
+        const dx = targetX - p.x;
+        const dy = targetY - p.y;
+        const d = Math.hypot(dx, dy) || 1;
+        const dribbleSpeed = p.speed * 0.80;
 
-      setTimeout(() => {
-        if (!simRunning) return;
-        simScoreAi++;
-        updateSimScoreboard();
-        triggerSimGoalFlash();
-        addSimFeedItem(min, '⚽', `ГОЛ! ${oppStar} прорывается по флангу и закручивает мяч в угол! (Счёт ${simScoreUser}:${simScoreAi})`, 'sim-feed-item--goal-ai');
+        p.x += (dx / d) * dribbleSpeed * dt;
+        p.y += (dy / d) * dribbleSpeed * dt;
+        const cl = clampPosition(p.x, p.y, false);
+        p.x = cl.x;
+        p.y = cl.y;
+        return;
+      }
 
-        simPlayPhase = 'CELEBRATION';
-        setTimeout(() => {
-          if (!simRunning) return;
-          resetRadarToCenter();
-          simPlayPhase = 'IDLE';
-        }, 1200);
-      }, 450);
+      // 3. Ближайший прессингующий
+      if (p === this.activePresser) {
+        p.state = 'STATE_PRESSING';
+        const carrier = this.ball.carrier;
+        const targetX = carrier ? carrier.x : this.ball.x;
+        const targetY = carrier ? carrier.y : this.ball.y;
+        const dx = targetX - p.x;
+        const dy = targetY - p.y;
+        const d = Math.hypot(dx, dy) || 1;
 
-    } else if (outcome === 'SAVE_USER') {
-      simBall.targetX = 26;
-      simBall.targetY = 115;
-      simBluePlayers[0].targetX = 28;
-      setTimeout(() => {
-        if (!simRunning) return;
-        addSimFeedItem(min, '🧤', `СЕЙВ! Наш вратарь ${userGk.name} парирует мощнейший выстрел от ${oppStar}!`, 'sim-feed-item--save');
-        simCarrier = { team: 'user', name: userGk.name, index: 0 };
-        simPlayPhase = 'IDLE';
-      }, 400);
+        p.x += (dx / d) * p.speed * 1.12 * dt;
+        p.y += (dy / d) * p.speed * 1.12 * dt;
 
-    } else if (outcome === 'SAVE_AI') {
-      simBall.targetX = 388;
-      simBall.targetY = 115;
-      setTimeout(() => {
-        if (!simRunning) return;
-        addSimFeedItem(min, '🧤', `СЕЙВ! Вратарь ${oppGk} спасает «${simCurrentStageInfo.club}» после удара ${userSt.name}!`, 'sim-feed-item--save');
-        simCarrier = { team: 'ai', name: oppGk, index: 0 };
-        simPlayPhase = 'IDLE';
-      }, 400);
+        // Единоборство при сближении (< 3.6%)
+        if (carrier && d < 3.6 && carrier.tackleImmunity <= 0 && carrier.role !== 'GK') {
+          const defStat = p.stats.def || 75;
+          const driStat = carrier.stats.dri || 75;
+          const tackleChance = 0.38 + ((defStat - driStat) / 200) * 0.35;
+          if (Math.random() < Math.max(0.18, Math.min(0.70, tackleChance))) {
+            this.receiveBall(p);
+          } else {
+            carrier.tackleImmunity = 0.5;
+          }
+        }
+        const cl = clampPosition(p.x, p.y, false);
+        p.x = cl.x;
+        p.y = cl.y;
+        return;
+      }
 
-    } else if (outcome === 'POST') {
-      simBall.targetX = 402;
-      simBall.targetY = 92;
-      setTimeout(() => {
-        if (!simRunning) return;
-        simBall.targetX = 360;
-        simBall.targetY = 125;
-        addSimFeedItem(min, '🎯', `Опасный момент! Мяч сотрясает каркас ворот!`);
-        simPlayPhase = 'IDLE';
-      }, 400);
+      // 4. Второй прессингующий (перекрытие коридора)
+      if (p === this.secondPresser) {
+        p.state = 'STATE_PRESSING';
+        const carrier = this.ball.carrier;
+        const targetX = carrier ? (carrier.x + p.baseX) / 2 : (this.ball.x + p.baseX) / 2;
+        const targetY = carrier ? (carrier.y + p.baseY) / 2 : (this.ball.y + p.baseY) / 2;
+        const dx = targetX - p.x;
+        const dy = targetY - p.y;
+        const d = Math.hypot(dx, dy) || 1;
+
+        p.x += (dx / d) * p.speed * 1.02 * dt;
+        p.y += (dy / d) * p.speed * 1.02 * dt;
+        const cl = clampPosition(p.x, p.y, false);
+        p.x = cl.x;
+        p.y = cl.y;
+        return;
+      }
+
+      // 5. Размеренное движение остальных полевых игроков
+      p.state = 'STATE_OFF_BALL';
+      const isUser = p.team === 'user';
+      const tShiftX = isUser ? (shiftX + tacticOffset) : (shiftX - tacticOffset);
+      let targetX = p.baseX + tShiftX;
+      let targetY = p.baseY + shiftY;
+
+      // Органическое дыхание с умеренным темпом
+      const breathX = Math.sin(this.simTime * 1.5 + p.index * 1.35) * 3.0;
+      const breathY = Math.cos(this.simTime * 1.3 + p.index * 1.65) * 3.0;
+      targetX += breathX;
+      targetY += breathY;
+
+      // Забегания в атакующие каналы при контроле мяча командой
+      const teamHasBall = this.ball.carrier && this.ball.carrier.team === p.team;
+      if (teamHasBall) {
+        if (['ST', 'LW', 'RW'].includes(p.role)) {
+          const runProg = isUser ? 8.0 : -8.0;
+          const channelY = p.role === 'LW' ? -4.5 : (p.role === 'RW' ? 4.5 : 0);
+          targetX += runProg;
+          targetY += channelY;
+        } else if (['CAM', 'CM'].includes(p.role)) {
+          const runProg = isUser ? 4.0 : -4.0;
+          targetX += runProg;
+        }
+      }
+
+      const dx = targetX - p.x;
+      const dy = targetY - p.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 0.1) {
+        const move = Math.min(dist, p.speed * 0.88 * dt);
+        p.x += (dx / dist) * move;
+        p.y += (dy / dist) * move;
+      }
+
+      const cl = clampPosition(p.x, p.y, false);
+      p.x = cl.x;
+      p.y = cl.y;
+    });
+  }
+
+  update(dt) {
+    const safeDt = Math.min(dt || 0.033, 0.1);
+    this.simTime += safeDt;
+
+    if (this.state === 'GOAL_PAUSE') {
+      this.goalPauseTimer -= safeDt;
+      if (this.goalPauseTimer <= 0) {
+        this.resetKickoff(this.ball.lastTouchTeam === 'user' ? 'opp' : 'user');
+      }
+      return;
     }
-  }, 1750);
+
+    this.updateBall(safeDt);
+    this.updatePressers();
+    this.updateCarrier(safeDt);
+    this.updatePlayers(safeDt);
+
+    // Подсчет владения мячом
+    if (this.ball.carrier) {
+      if (this.ball.carrier.team === 'user') this.userPossTicks++;
+      else this.oppPossTicks++;
+      if (simStats && (this.userPossTicks + this.oppPossTicks) > 0) {
+        simStats.userPossession = Math.round((this.userPossTicks / (this.userPossTicks + this.oppPossTicks)) * 100);
+      }
+    }
+  }
+}
+
+// Backward-compatible alias for existing hooks and renderer
+const MatchEngine2D = MatchSimEngine;
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   MATCH RENDERER — DOM ENTITY & CANVAS VISUALIZATION LAYER
+═══════════════════════════════════════════════════════════════════ */
+class MatchRenderer {
+  constructor() {
+    this.canvas = null;
+    this.ctx = null;
+    this.container = null;
+    this.entitiesLayer = null;
+    this.blueElements = [];
+    this.redElements = [];
+    this.ballElement = null;
+    this.badgeElement = null;
+  }
+
+  init(containerEl, canvasEl) {
+    this.container = containerEl;
+    this.canvas = canvasEl;
+    if (this.canvas) this.ctx = this.canvas.getContext('2d');
+
+    this.drawPitchBackground();
+
+    let layer = document.getElementById('radarEntitiesLayer');
+    if (!layer && this.container) {
+      layer = document.createElement('div');
+      layer.id = 'radarEntitiesLayer';
+      layer.className = 'radar-entities-layer';
+      this.container.appendChild(layer);
+    }
+    this.entitiesLayer = layer;
+    if (!this.entitiesLayer) return;
+
+    this.entitiesLayer.innerHTML = '';
+
+    this.blueElements = [];
+    for (let i = 0; i < 11; i++) {
+      const el = document.createElement('div');
+      el.className = 'radar-player blue';
+      this.entitiesLayer.appendChild(el);
+      this.blueElements.push(el);
+    }
+
+    this.redElements = [];
+    for (let i = 0; i < 11; i++) {
+      const el = document.createElement('div');
+      el.className = 'radar-player red';
+      this.entitiesLayer.appendChild(el);
+      this.redElements.push(el);
+    }
+
+    this.ballElement = document.createElement('div');
+    this.ballElement.className = 'radar-ball';
+    this.entitiesLayer.appendChild(this.ballElement);
+
+    this.badgeElement = document.createElement('div');
+    this.badgeElement.className = 'radar-carrier-badge blue';
+    this.badgeElement.style.display = 'none';
+    this.entitiesLayer.appendChild(this.badgeElement);
+  }
+
+  drawPitchBackground() {
+    if (!this.canvas || !this.ctx) return;
+    const ctx = this.ctx;
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    const scaleX = w / 414;
+    const scaleY = h / 230;
+
+    ctx.save();
+    ctx.scale(scaleX, scaleY);
+    ctx.clearRect(0, 0, 414, 230);
+
+    // Turf & Subtle Mowing Stripes
+    ctx.fillStyle = '#0a2113';
+    ctx.fillRect(0, 0, 414, 230);
+
+    const stripeW = 414 / 8;
+    for (let i = 0; i < 8; i += 2) {
+      ctx.fillStyle = 'rgba(0, 255, 136, 0.025)';
+      ctx.fillRect(i * stripeW, 0, stripeW, 230);
+    }
+
+    // Pitch Lines
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
+    ctx.lineWidth = 1.6;
+
+    ctx.strokeRect(12, 12, 390, 206);
+
+    ctx.beginPath();
+    ctx.moveTo(207, 12);
+    ctx.lineTo(207, 218);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(207, 115, 36, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.beginPath();
+    ctx.arc(207, 115, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Boxes & Arcs
+    ctx.strokeRect(12, 55, 62, 120);
+    ctx.strokeRect(12, 80, 24, 70);
+    ctx.beginPath(); ctx.arc(52, 115, 2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(52, 115, 24, -0.9, 0.9); ctx.stroke();
+
+    ctx.strokeRect(340, 55, 62, 120);
+    ctx.strokeRect(378, 80, 24, 70);
+    ctx.beginPath(); ctx.arc(362, 115, 2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(362, 115, 24, Math.PI - 0.9, Math.PI + 0.9); ctx.stroke();
+
+    // Goal Nets
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.strokeRect(4, 92, 8, 46);
+    ctx.strokeRect(402, 92, 8, 46);
+
+    ctx.restore();
+  }
+
+  render(engine) {
+    if (!engine) return;
+
+    engine.userPlayers.forEach((p, idx) => {
+      const el = this.blueElements[idx];
+      if (el) {
+        const cl = clampPosition(p.x, p.y, p.role === 'GK');
+        el.style.left = `${cl.x}%`;
+        el.style.top = `${cl.y}%`;
+        el.className = 'radar-player blue'
+          + (p.role === 'GK' ? ' gk' : '')
+          + (p.state === 'STATE_PRESSING' ? ' pressing' : '');
+      }
+    });
+
+    engine.oppPlayers.forEach((p, idx) => {
+      const el = this.redElements[idx];
+      if (el) {
+        const cl = clampPosition(p.x, p.y, p.role === 'GK');
+        el.style.left = `${cl.x}%`;
+        el.style.top = `${cl.y}%`;
+        el.className = 'radar-player red'
+          + (p.role === 'GK' ? ' gk' : '')
+          + (p.state === 'STATE_PRESSING' ? ' pressing' : '');
+      }
+    });
+
+    if (this.ballElement) {
+      const bx = Math.max(2, Math.min(98, engine.ball.x));
+      const by = Math.max(6, Math.min(94, engine.ball.y));
+      this.ballElement.style.left = `${bx}%`;
+      this.ballElement.style.top = `${by}%`;
+    }
+
+    if (this.badgeElement) {
+      const carrier = engine.ball.carrier;
+      if (carrier && carrier.name) {
+        const cl = clampPosition(carrier.x, carrier.y, carrier.role === 'GK');
+        this.badgeElement.style.display = 'flex';
+        this.badgeElement.style.left = `${cl.x}%`;
+        this.badgeElement.style.top = `${cl.y}%`;
+        this.badgeElement.className = `radar-carrier-badge ${carrier.team === 'opp' ? 'red' : 'blue'}`;
+        this.badgeElement.textContent = `${carrier.name} ⚽`;
+      } else {
+        this.badgeElement.style.display = 'none';
+      }
+    }
+  }
 }
 
 function processSimMinuteEvent(min) {
   const ev = simScheduledEvents.find(e => e.minute === min);
   if (!ev) return;
 
-  const stars = (simCurrentStageInfo && simCurrentStageInfo.stars) || ['Звезда'];
-  const oppStar = stars[0] || 'Форвард';
-  const oppMid = stars[1] || 'Полузащитник';
-  const userDef = getSimUserPlayer(2);
-  const userWinger = getSimUserPlayer(8);
+  const clubName = (simCurrentStageInfo && simCurrentStageInfo.club) || 'Соперник';
+  const oppRoster = getOpponentRoster(clubName);
+  const oppStar = oppRoster[9] ? oppRoster[9].name : 'Форвард';
+  const oppMid = oppRoster[6] ? oppRoster[6].name : 'Полузащитник';
+  const userDef = simBluePlayers.find(p => ['CB', 'LB', 'RB', 'DEF'].includes(p.role)) || simBluePlayers[2] || { name: 'Защитник' };
 
-  // Tactic modifiers
-  if (simCurrentTactic === 'bus' && ev.type === 'GOAL_AI' && Math.random() < 0.4) {
-    addSimFeedItem(min, '🛡️', `«Автобус» работает! Защита блокирует опасный прорыв ${oppStar}!`);
-    return;
-  }
-  if (simCurrentTactic === 'press' && ev.type === 'SAVE_AI' && Math.random() < 0.5) {
-    ev.type = 'GOAL_USER'; // Press converted chance into goal!
-  }
-
-  switch (ev.type) {
-    case 'GOAL_USER':
-      run3PhaseAttack('user', 'GOAL_USER', min);
-      break;
-
-    case 'GOAL_AI':
-      run3PhaseAttack('ai', 'GOAL_AI', min);
-      break;
-
-    case 'SAVE_USER':
-      run3PhaseAttack('ai', 'SAVE_USER', min);
-      break;
-
-    case 'SAVE_AI':
-      run3PhaseAttack('user', 'SAVE_AI', min);
-      break;
-
-    case 'POST':
-      run3PhaseAttack(Math.random() < 0.5 ? 'user' : 'ai', 'POST', min);
-      break;
-
-    case 'CORNER': {
-      const setPieceCardId = save.myClubRoles && save.myClubRoles.setPieces;
-      const setPlayer = setPieceCardId ? PLAYERS_DB.find(p => p.id === setPieceCardId) : getSimUserPlayer(6);
-      addSimFeedItem(min, '📐', `Опасный угловой подаёт ${setPlayer.name}! Мяч закручен в район вратарской.`);
-      break;
+  if (ev.type === 'GOAL_USER') {
+    if (matchEngine2D) matchEngine2D.injectAttackOpportunity('user', 'GOAL');
+  } else if (ev.type === 'GOAL_AI') {
+    if (matchEngine2D) matchEngine2D.injectAttackOpportunity('opp', 'GOAL');
+  } else if (ev.type === 'SAVE_USER') {
+    if (matchEngine2D) matchEngine2D.injectAttackOpportunity('opp', 'SAVE');
+  } else if (ev.type === 'SAVE_AI') {
+    if (matchEngine2D) matchEngine2D.injectAttackOpportunity('user', 'SAVE');
+  } else if (ev.type === 'POST') {
+    if (matchEngine2D) matchEngine2D.injectAttackOpportunity(Math.random() < 0.5 ? 'user' : 'opp', 'SAVE');
+    addSimFeedItem(min, '🎯', 'Опаснейший момент! Мяч сотрясает каркас ворот!');
+  } else if (ev.type === 'CORNER') {
+    if (simStats) simStats.userShots++;
+    const setPieceCardId = save.myClubRoles && save.myClubRoles.setPieces;
+    const setPlayer = setPieceCardId ? PLAYERS_DB.find(p => p.id === setPieceCardId) : (simBluePlayers[1] || simBluePlayers[0]);
+    addSimFeedItem(min, '📐', `Опасный угловой подаёт мастер стандартов ${setPlayer ? setPlayer.name : 'Игрок'}! Мяч закручен в район вратарской.`);
+  } else if (ev.type === 'YELLOW_CARD') {
+    const isUser = Math.random() < 0.5;
+    if (isUser) {
+      if (simStats) simStats.userFouls++;
+      addSimFeedItem(min, '🟨', `Предупреждение за срыв атаки получил ${userDef ? userDef.name : 'Защитник'}`);
+    } else {
+      if (simStats) simStats.aiFouls++;
+      addSimFeedItem(min, '🟨', `Жёлтая карточка: ${oppMid} срывает нашу быструю контратаку.`);
     }
-
-    case 'YELLOW_CARD': {
-      const isUser = Math.random() < 0.5;
-      if (isUser) {
-        addSimFeedItem(min, '🟨', `Предупреждение за срыв атаки получил ${userDef.name}`);
-      } else {
-        addSimFeedItem(min, '🟨', `Жёлтая карточка: ${oppMid} срывает нашу быструю контратаку.`);
-      }
-      break;
-    }
-
-    case 'INJURY': {
-      // Pick user player on pitch (index 1 to 10)
-      const targetSlot = Math.floor(Math.random() * 10) + 1;
-      const injuredPlayer = getSimUserPlayer(targetSlot);
-      simUserInjuries[targetSlot] = true;
-      addSimFeedItem(min, '🚑', `ТРАВМА: ${injuredPlayer.name} получил повреждение! Характеристики снижены на 20%. Сделайте замену!`, 'sim-feed-item--injury');
-      break;
-    }
+  } else if (ev.type === 'INJURY') {
+    const targetSlot = Math.floor(Math.random() * (simBluePlayers.length - 1)) + 1;
+    const injuredPlayer = getSimUserPlayer(targetSlot);
+    simUserInjuries[targetSlot] = true;
+    addSimFeedItem(min, '🚑', `ТРАВМА: ${injuredPlayer.name} получил повреждение! Характеристики снижены на 20%. Сделайте замену!`, 'sim-feed-item--injury');
   }
 }
 
 function resetRadarToCenter() {
-  simBall.x = 207;
-  simBall.y = 115;
-  simBall.targetX = 207;
-  simBall.targetY = 115;
-  simBluePlayers.forEach(p => { p.targetX = p.baseX; p.targetY = p.baseY; });
-  simRedPlayers.forEach(p => { p.targetX = p.baseX; p.targetY = p.baseY; });
+  if (matchEngine2D) {
+    matchEngine2D.resetKickoff('opp');
+  }
 }
 
 function startSimClock() {
-  if (simIntervalId) clearInterval(simIntervalId);
-  const intervalMs = simSpeedMode === 2 ? 250 : 500;
+  if (simIntervalId) {
+    clearInterval(simIntervalId);
+    simIntervalId = null;
+  }
+  // 1x: ~81 сек на полный матч 90' (900мс/мин), 2x: 450мс/мин
+  const intervalMs = simSpeedMode === 2 ? 450 : 900;
 
   simIntervalId = setInterval(() => {
-    if (!simRunning || simIsPaused) return;
+    if (!simRunning || simIsPaused || simIsHalftimePause) return;
 
     simMinute++;
     const simClock = document.getElementById('simClock');
@@ -3206,14 +5322,24 @@ function startSimClock() {
       simClock.textContent = `${minStr}:00`;
     }
 
-    // Halftime change
-    const simPeriod = document.getElementById('simPeriod');
+    // 1st Half Whistle strictly at minute 45
     if (simMinute === 45) {
+      const simPeriod = document.getElementById('simPeriod');
       if (simPeriod) simPeriod.textContent = 'ПЕРЕРЫВ';
-      addSimFeedItem(45, '⏸️', 'Перерыв! Команды уходят в раздевалку.');
+      addSimFeedItem(45, '⏸️', 'Свисток на перерыв! Команды уходят в раздевалку.');
       resetRadarToCenter();
-    } else if (simMinute === 46) {
-      if (simPeriod) simPeriod.textContent = '2-Й ТАЙМ';
+
+      // Strict 2-second pause before 2nd half begins
+      simIsHalftimePause = true;
+      if (simHalftimeTimeout) clearTimeout(simHalftimeTimeout);
+      simHalftimeTimeout = setTimeout(() => {
+        simIsHalftimePause = false;
+        if (!simRunning) return;
+        const pEl = document.getElementById('simPeriod');
+        if (pEl) pEl.textContent = '2-Й ТАЙМ';
+        addSimFeedItem(46, '▶️', 'Начался 2-й тайм!');
+      }, 2000);
+      return;
     }
 
     // Fatigue alert at minute 60
@@ -3221,48 +5347,33 @@ function startSimClock() {
       addSimFeedItem(60, '⚡', '60\' Стартовый состав начинает уставать! Рекомендуется освежить игру заменой.');
     }
 
-    // Check minute events
-    processSimMinuteEvent(simMinute);
-
-    // Normal circulation between phases
-    if (simPlayPhase === 'IDLE') {
-      const isUserPossession = Math.random() < (simUserOvr / (simUserOvr + simAiOvr));
-      if (isUserPossession) {
-        const rIdx = Math.floor(Math.random() * 6) + 5;
-        const receiver = simBluePlayers[rIdx];
-        if (receiver) {
-          simCarrier = { team: 'user', name: receiver.name, index: rIdx };
-          simBall.targetX = receiver.x;
-          simBall.targetY = receiver.y;
-          receiver.targetX = receiver.baseX + (Math.random() * 30 - 10);
-          receiver.targetY = receiver.baseY + (Math.random() * 20 - 10);
-        }
-      } else {
-        const rIdx = Math.floor(Math.random() * 6) + 5;
-        const receiver = simRedPlayers[rIdx];
-        if (receiver) {
-          simCarrier = { team: 'ai', name: receiver.name, index: rIdx };
-          simBall.targetX = receiver.x;
-          simBall.targetY = receiver.y;
-          receiver.targetX = receiver.baseX - (Math.random() * 30 - 10);
-          receiver.targetY = receiver.baseY + (Math.random() * 20 - 10);
-        }
-      }
+    // Added time alert at minute 90
+    if (simMinute === 90 && simAddedTime > 0) {
+      addSimFeedItem(90, '⏱️', `Судья добавил ${simAddedTime} мин. к основному времени!`);
     }
 
-    // Match completion at 90
-    if (simMinute >= 90) {
-      simRunning = false;
-      clearInterval(simIntervalId);
-      finishSimMatch();
+    // Check scheduled timeline events
+    processSimMinuteEvent(simMinute);
+
+    // Final whistle: strictly stop at 90 + added time (never runs beyond!)
+    const finalWhistleMinute = 90 + (simAddedTime || 0);
+    if (simMinute >= finalWhistleMinute) {
+      stopSimLoops();
+      const simPeriod = document.getElementById('simPeriod');
+      if (simPeriod) simPeriod.textContent = 'МАТЧ ОКОНЧЕН';
+
+      if (simScoreUser === simScoreAi) {
+        startPenaltyShootout();
+      } else {
+        finishSimMatch();
+      }
     }
   }, intervalMs);
 }
 
 function skipSimMatchToEnd() {
   if (!simRunning) return;
-  simRunning = false;
-  if (simIntervalId) clearInterval(simIntervalId);
+  stopSimLoops();
 
   const remaining = simScheduledEvents.filter(e => e.minute > simMinute);
   const stars = (simCurrentStageInfo && simCurrentStageInfo.stars) || ['Звезда'];
@@ -3272,28 +5383,393 @@ function skipSimMatchToEnd() {
   remaining.forEach(ev => {
     if (ev.type === 'GOAL_USER') {
       simScoreUser++;
+      simStats.userShots++;
+      simStats.userShotsOnTarget++;
       if (userSt && userSt.id) simUserScorers.push(userSt.id);
       addSimFeedItem(ev.minute, '⚽', `ГОЛ! ${userSt.name} поражает ворота соперника! (Счёт ${simScoreUser}:${simScoreAi})`, 'sim-feed-item--goal-user');
     } else if (ev.type === 'GOAL_AI') {
       simScoreAi++;
+      simStats.aiShots++;
+      simStats.aiShotsOnTarget++;
       addSimFeedItem(ev.minute, '⚽', `ГОЛ! ${oppStar} поражает наши ворота! (Счёт ${simScoreUser}:${simScoreAi})`, 'sim-feed-item--goal-ai');
-    } else if (ev.type === 'SAVE_USER' || ev.type === 'SAVE_AI') {
-      addSimFeedItem(ev.minute, '🧤', `Опасный удар отражён вратарём!`, 'sim-feed-item--save');
+    } else if (ev.type === 'SAVE_USER') {
+      simStats.aiShots++;
+      simStats.aiShotsOnTarget++;
+      simStats.userSaves++;
+      addSimFeedItem(ev.minute, '🧤', `Опасный удар отражён нашим вратарём!`, 'sim-feed-item--save');
+    } else if (ev.type === 'SAVE_AI') {
+      simStats.userShots++;
+      simStats.userShotsOnTarget++;
+      simStats.aiSaves++;
+      addSimFeedItem(ev.minute, '🧤', `Вратарь соперника парирует удар!`, 'sim-feed-item--save');
     } else if (ev.type === 'POST') {
+      simStats.userShots++;
       addSimFeedItem(ev.minute, '🎯', `Опасный момент! Мяч сотрясает штангу ворот!`);
     } else if (ev.type === 'YELLOW_CARD') {
+      simStats.userFouls++;
       addSimFeedItem(ev.minute, '🟨', `Предупреждение за срыв атаки.`);
     }
   });
 
-  simMinute = 90;
+  simMinute = 90 + (simAddedTime || 0);
   const simClock = document.getElementById('simClock');
-  if (simClock) simClock.textContent = '90:00';
+  if (simClock) simClock.textContent = `${simMinute}:00`;
+  const simPeriod = document.getElementById('simPeriod');
+  if (simPeriod) simPeriod.textContent = 'МАТЧ ОКОНЧЕН';
   updateSimScoreboard();
-  finishSimMatch();
+
+  if (simScoreUser === simScoreAi) {
+    startPenaltyShootout();
+  } else {
+    finishSimMatch();
+  }
 }
 
-function finishSimMatch() {
+/* ═══════════════════════════════════════════════════════════════════
+   ИНТЕРАКТИВНАЯ СЕРИЯ ПЕНАЛЬТИ (ПРИ НИЧЬЕЙ)
+═══════════════════════════════════════════════════════════════════ */
+let penaltyState = {
+  round: 1,
+  phase: 'USER_SHOOT', // 'USER_SHOOT' | 'AI_SHOOT'
+  userScore: 0,
+  aiScore: 0,
+  userKicks: [],
+  aiKicks: [],
+  isSuddenDeath: false,
+  isFinished: false,
+  inputLocked: false
+};
+
+function renderPenaltyDots() {
+  const userDotsEl = document.getElementById('penUserDots');
+  const aiDotsEl = document.getElementById('penAiDots');
+  if (!userDotsEl || !aiDotsEl) return;
+
+  const totalDots = Math.max(5, penaltyState.userKicks.length, penaltyState.aiKicks.length);
+  
+  userDotsEl.innerHTML = '';
+  for (let i = 0; i < totalDots; i++) {
+    const dot = document.createElement('span');
+    dot.className = 'pen-dot';
+    if (i < penaltyState.userKicks.length) {
+      dot.classList.add(penaltyState.userKicks[i] ? 'goal' : 'miss');
+    }
+    userDotsEl.appendChild(dot);
+  }
+
+  aiDotsEl.innerHTML = '';
+  for (let i = 0; i < totalDots; i++) {
+    const dot = document.createElement('span');
+    dot.className = 'pen-dot';
+    if (i < penaltyState.aiKicks.length) {
+      dot.classList.add(penaltyState.aiKicks[i] ? 'goal' : 'miss');
+    }
+    aiDotsEl.appendChild(dot);
+  }
+}
+
+function startPenaltyShootout() {
+  stopSimLoops();
+  penaltyState = {
+    round: 1,
+    phase: 'USER_SHOOT',
+    userScore: 0,
+    aiScore: 0,
+    userKicks: [],
+    aiKicks: [],
+    isSuddenDeath: false,
+    isFinished: false,
+    inputLocked: false
+  };
+
+  const modal = document.getElementById('modalPenaltyShootout');
+  const matchupEl = document.getElementById('penaltyMatchup');
+  const scoreUserEl = document.getElementById('penUserScore');
+  const scoreAiEl = document.getElementById('penAiScore');
+  const aiTeamNameEl = document.getElementById('penAiTeamName');
+
+  if (matchupEl) matchupEl.textContent = `МОЙ КЛУБ vs ${simCurrentStageInfo.club}`;
+  if (aiTeamNameEl) aiTeamNameEl.textContent = simCurrentStageInfo.club;
+  if (scoreUserEl) scoreUserEl.textContent = '0';
+  if (scoreAiEl) scoreAiEl.textContent = '0';
+
+  renderPenaltyDots();
+  addSimFeedItem(90, '🎯', 'Ничья в основное время! Победитель определится в серии пенальти!');
+
+  if (modal) modal.classList.remove('hidden');
+  setupPenaltyUserShootPhase();
+}
+
+function setupPenaltyUserShootPhase() {
+  penaltyState.phase = 'USER_SHOOT';
+  penaltyState.inputLocked = false;
+
+  const banner = document.getElementById('penaltyBanner');
+  const status = document.getElementById('penaltyStatus');
+  const ball = document.getElementById('penaltyBall');
+  const gk = document.getElementById('penaltyGk');
+  const gkName = document.getElementById('penaltyGkName');
+  const targets = document.getElementById('penaltyTargets');
+
+  if (ball) ball.style.transform = 'translate(-50%, 0)';
+  if (gk) {
+    gk.className = 'penalty-goalkeeper';
+  }
+  if (gkName) gkName.textContent = simCurrentStageInfo.gk || 'Вратарь';
+
+  const roundText = penaltyState.isSuddenDeath ? `Внезапная смерть (Раунд ${penaltyState.round})` : `Раунд ${penaltyState.round} из 5`;
+  if (banner) banner.textContent = `${roundText} • Ваш удар! Выберите угол ворот:`;
+  if (status) {
+    status.textContent = 'Выберите направление удара (11 метров):';
+    status.style.color = 'var(--silver)';
+  }
+
+  const bLeft = document.getElementById('btnPenTargetLeft');
+  const bCenter = document.getElementById('btnPenTargetCenter');
+  const bRight = document.getElementById('btnPenTargetRight');
+  if (bLeft) bLeft.querySelector('.pen-tgt-lbl').textContent = 'ВЛЕВО';
+  if (bCenter) bCenter.querySelector('.pen-tgt-lbl').textContent = 'ПО ЦЕНТРУ';
+  if (bRight) bRight.querySelector('.pen-tgt-lbl').textContent = 'ВПРАВО';
+  if (targets) targets.style.pointerEvents = 'auto';
+}
+
+function handlePenaltyUserShot(zone) {
+  if (penaltyState.inputLocked || penaltyState.phase !== 'USER_SHOOT') return;
+  penaltyState.inputLocked = true;
+
+  const targets = document.getElementById('penaltyTargets');
+  if (targets) targets.style.pointerEvents = 'none';
+
+  const ball = document.getElementById('penaltyBall');
+  const gk = document.getElementById('penaltyGk');
+  const status = document.getElementById('penaltyStatus');
+  const scoreUserEl = document.getElementById('penUserScore');
+
+  // AI Goalkeeper dives
+  const zones = ['left', 'center', 'right'];
+  const aiGkDive = zones[Math.floor(Math.random() * zones.length)];
+
+  // Animate ball trajectory
+  if (ball) {
+    if (zone === 'left') ball.style.transform = 'translate(-85px, -125px) scale(0.6)';
+    else if (zone === 'center') ball.style.transform = 'translate(0px, -135px) scale(0.55)';
+    else ball.style.transform = 'translate(85px, -125px) scale(0.6)';
+  }
+
+  // Animate keeper dive
+  if (gk) {
+    gk.classList.add(`dive-${aiGkDive}`);
+  }
+
+  const isGuessed = aiGkDive === zone;
+  const isGoal = !isGuessed || (Math.random() < 0.15); // 15% to slip through fingers even if guessed
+
+  setTimeout(() => {
+    if (isGoal) {
+      penaltyState.userScore++;
+      penaltyState.userKicks.push(true);
+      if (scoreUserEl) scoreUserEl.textContent = penaltyState.userScore;
+      if (status) {
+        status.textContent = '⚽ ГООООЛ! Мяч вонзается в сетку ворот!';
+        status.style.color = 'var(--gold)';
+      }
+      triggerSimGoalFlash();
+      burstParticles();
+    } else {
+      penaltyState.userKicks.push(false);
+      if (status) {
+        status.textContent = `🧤 СЕЙВ! Вратарь ${simCurrentStageInfo.gk || 'соперника'} угадывает и парирует удар!`;
+        status.style.color = '#ff4444';
+      }
+    }
+
+    renderPenaltyDots();
+
+    // Check premature win condition or proceed to AI kick phase
+    setTimeout(() => {
+      checkPenaltyShootoutStepAfterUser();
+    }, 1400);
+  }, 450);
+}
+
+function checkPenaltyShootoutStepAfterUser() {
+  // If in regular 5 rounds and math impossibility reached
+  const uK = penaltyState.userKicks.length;
+  const aK = penaltyState.aiKicks.length;
+  const uRemaining = 5 - uK;
+  const aRemaining = 5 - aK;
+
+  if (!penaltyState.isSuddenDeath && uK <= 5 && aK <= 5) {
+    if (penaltyState.userScore > penaltyState.aiScore + aRemaining) {
+      finishPenaltyShootout();
+      return;
+    }
+  }
+
+  setupPenaltyAiShootPhase();
+}
+
+function setupPenaltyAiShootPhase() {
+  penaltyState.phase = 'AI_SHOOT';
+  penaltyState.inputLocked = false;
+
+  const banner = document.getElementById('penaltyBanner');
+  const status = document.getElementById('penaltyStatus');
+  const ball = document.getElementById('penaltyBall');
+  const gk = document.getElementById('penaltyGk');
+  const gkName = document.getElementById('penaltyGkName');
+  const targets = document.getElementById('penaltyTargets');
+
+  if (ball) ball.style.transform = 'translate(-50%, 0)';
+  if (gk) {
+    gk.className = 'penalty-goalkeeper';
+  }
+  const userGk = getSimUserGK();
+  if (gkName) gkName.textContent = userGk.name;
+
+  const roundText = penaltyState.isSuddenDeath ? `Внезапная смерть (Раунд ${penaltyState.round})` : `Раунд ${penaltyState.round} из 5`;
+  if (banner) banner.textContent = `${roundText} • Удар соперника! Куда прыгнет ваш вратарь?`;
+  if (status) {
+    status.textContent = 'Угадайте направление удара соперника:';
+    status.style.color = 'var(--silver)';
+  }
+
+  const bLeft = document.getElementById('btnPenTargetLeft');
+  const bCenter = document.getElementById('btnPenTargetCenter');
+  const bRight = document.getElementById('btnPenTargetRight');
+  if (bLeft) bLeft.querySelector('.pen-tgt-lbl').textContent = 'ПРЫЖОК ВЛЕВО';
+  if (bCenter) bCenter.querySelector('.pen-tgt-lbl').textContent = 'ПО ЦЕНТРУ';
+  if (bRight) bRight.querySelector('.pen-tgt-lbl').textContent = 'ПРЫЖОК ВПРАВО';
+  if (targets) targets.style.pointerEvents = 'auto';
+}
+
+function handlePenaltyUserSave(userDive) {
+  if (penaltyState.inputLocked || penaltyState.phase !== 'AI_SHOOT') return;
+  penaltyState.inputLocked = true;
+
+  const targets = document.getElementById('penaltyTargets');
+  if (targets) targets.style.pointerEvents = 'none';
+
+  const ball = document.getElementById('penaltyBall');
+  const gk = document.getElementById('penaltyGk');
+  const status = document.getElementById('penaltyStatus');
+  const scoreAiEl = document.getElementById('penAiScore');
+
+  // AI shooter picks a zone
+  const zones = ['left', 'center', 'right'];
+  const aiShotZone = zones[Math.floor(Math.random() * zones.length)];
+
+  // Animate user keeper
+  if (gk) {
+    gk.classList.add(`dive-${userDive}`);
+  }
+
+  // Animate ball trajectory
+  if (ball) {
+    if (aiShotZone === 'left') ball.style.transform = 'translate(-85px, -125px) scale(0.6)';
+    else if (aiShotZone === 'center') ball.style.transform = 'translate(0px, -135px) scale(0.55)';
+    else ball.style.transform = 'translate(85px, -125px) scale(0.6)';
+  }
+
+  const isGuessed = userDive === aiShotZone;
+  const isGoal = !isGuessed;
+
+  setTimeout(() => {
+    if (isGoal) {
+      penaltyState.aiScore++;
+      penaltyState.aiKicks.push(true);
+      if (scoreAiEl) scoreAiEl.textContent = penaltyState.aiScore;
+      if (status) {
+        status.textContent = `⚽ Гол! ${simCurrentStageInfo.stars[0] || 'Соперник'} реализует пенальти.`;
+        status.style.color = '#ff4444';
+      }
+    } else {
+      penaltyState.aiKicks.push(false);
+      simStats.userSaves++;
+      if (status) {
+        status.textContent = `🧤 БРАВО! ${getSimUserGK().name} ВЫТАЩИЛ ПЕНАЛЬТИ!`;
+        status.style.color = 'var(--cyan)';
+      }
+      burstParticles();
+    }
+
+    renderPenaltyDots();
+
+    setTimeout(() => {
+      checkPenaltyRoundResolution();
+    }, 1400);
+  }, 450);
+}
+
+function checkPenaltyRoundResolution() {
+  const uK = penaltyState.userKicks.length;
+  const aK = penaltyState.aiKicks.length;
+
+  if (!penaltyState.isSuddenDeath) {
+    const uRemaining = 5 - uK;
+    const aRemaining = 5 - aK;
+
+    // Check if one team mathematically won
+    if (penaltyState.userScore > penaltyState.aiScore + aRemaining) {
+      finishPenaltyShootout();
+      return;
+    }
+    if (penaltyState.aiScore > penaltyState.userScore + uRemaining) {
+      finishPenaltyShootout();
+      return;
+    }
+
+    // Both completed 5 kicks
+    if (uK >= 5 && aK >= 5) {
+      if (penaltyState.userScore !== penaltyState.aiScore) {
+        finishPenaltyShootout();
+        return;
+      }
+      // Tied after 5 rounds -> switch to Sudden Death
+      penaltyState.isSuddenDeath = true;
+      penaltyState.round++;
+      setupPenaltyUserShootPhase();
+      return;
+    }
+  } else {
+    // Sudden Death: if both took kicks in this sudden death round and scores differ
+    if (uK === aK) {
+      if (penaltyState.userScore !== penaltyState.aiScore) {
+        finishPenaltyShootout();
+        return;
+      }
+    }
+  }
+
+  // Next round
+  penaltyState.round++;
+  setupPenaltyUserShootPhase();
+}
+
+function finishPenaltyShootout() {
+  penaltyState.isFinished = true;
+  const status = document.getElementById('penaltyStatus');
+  const isWin = penaltyState.userScore > penaltyState.aiScore;
+
+  if (status) {
+    status.textContent = isWin ? '👑 ПОБЕДА В СЕРИИ ПЕНАЛЬТИ!' : '🛡️ ПОРАЖЕНИЕ В СЕРИИ ПЕНАЛЬТИ';
+    status.style.color = isWin ? 'var(--gold)' : '#ff4444';
+  }
+
+  if (isWin) burstParticles();
+
+  setTimeout(() => {
+    const modal = document.getElementById('modalPenaltyShootout');
+    if (modal) modal.classList.add('hidden');
+    finishSimMatch({ userPen: penaltyState.userScore, aiPen: penaltyState.aiScore });
+  }, 1800);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ЗАВЕРШЕНИЕ МАТЧА, ПОСЛЕМАТЧЕВАЯ СТАТИСТИКА И ТРОФЕИ
+═══════════════════════════════════════════════════════════════════ */
+function finishSimMatch(penaltyResult = null) {
+  stopSimLoops();
   if (goalOverlayTimeout) clearTimeout(goalOverlayTimeout);
   if (goalOverlayFadeTimeout) clearTimeout(goalOverlayFadeTimeout);
   const goalOverlay = document.getElementById('simGoalOverlay');
@@ -3309,8 +5785,8 @@ function finishSimMatch() {
   // Increment squad matches together
   save.myClubMatchesTogether = (save.myClubMatchesTogether || 0) + 1;
 
-  const isWin = simScoreUser > simScoreAi;
-  const isDraw = simScoreUser === simScoreAi;
+  const isWin = penaltyResult ? (penaltyResult.userPen > penaltyResult.aiPen) : (simScoreUser > simScoreAi);
+  const isDraw = penaltyResult ? false : (simScoreUser === simScoreAi);
   const isCleanSheet = simScoreAi === 0;
 
   // Track Club Stats
@@ -3385,12 +5861,17 @@ function finishSimMatch() {
       if (!Array.isArray(save.trophies)) save.trophies = [];
       if (!save.trophies.includes(tourn.id)) save.trophies.push(tourn.id);
 
+      // Increment trophy room counter!
+      if (!save.trophyCounts) save.trophyCounts = { pl: 0, laliga: 0, ucl: 0 };
+      save.trophyCounts[tourn.id] = (save.trophyCounts[tourn.id] || 0) + 1;
+
       totalCoins += tourn.rewards.coins;
       xpReward += tourn.rewards.xp;
       tournamentMsg = `🏆 ВЫ ВЫИГРАЛИ ${tourn.name.toUpperCase()}! (+${tourn.rewards.coins} ★, +${tourn.rewards.xp} XP)`;
     } else {
       tState.stage++;
-      tournamentMsg = `Вы вышли в ${tourn.stages[tState.stage].name}!`;
+      const nextStages = getTournamentStages(tourn.id);
+      tournamentMsg = `Вы вышли в ${nextStages[tState.stage].name}!`;
     }
   } else {
     // Loss in playoff
@@ -3398,12 +5879,33 @@ function finishSimMatch() {
     tournamentMsg = `Вы выбыли из турнира на стадии ${simCurrentStageInfo.name}.`;
   }
 
+  // Award training points strictly to the 11 starting players
+  const starters11 = getValidMyClubSquad();
+  let mvpPlayer = null;
+  if (starters11.length > 0) {
+    mvpPlayer = starters11.reduce((best, p) => {
+      return (!best || getPlayerEffectiveRating(p) > getPlayerEffectiveRating(best)) ? p : best;
+    }, starters11[0]);
+  }
+
+  const allTrData = getAllPlayerTrainingData();
+  starters11.forEach(p => {
+    if (!p) return;
+    const pEntry = getPlayerTrainingData(p.id, p.position);
+    const isMvp = mvpPlayer && mvpPlayer.id === p.id;
+    const pts = isMvp ? 2 : 1;
+    pEntry.points = (pEntry.points || 0) + pts;
+    allTrData[String(p.id)] = pEntry;
+  });
+  saveAllPlayerTrainingData(allTrData);
+  updateTrainingHubBadge();
+
   save.coins += totalCoins;
   save.xp += xpReward;
   writeSave();
   updateTopBar();
 
-  // Populate Result Modal
+  // Populate Result Modal & Stats
   setTimeout(() => {
     const modal = document.getElementById('modalSimResult');
     const icon = document.getElementById('simResultIcon');
@@ -3418,34 +5920,66 @@ function finishSimMatch() {
         title.textContent = '👑 ЧЕМПИОН!';
         if (icon) icon.textContent = '🏆';
       } else if (isWin) {
-        title.textContent = 'ПОБЕДА!';
+        title.textContent = penaltyResult ? 'ПОБЕДА ПО ПЕНАЛЬТИ!' : 'ПОБЕДА!';
         if (icon) icon.textContent = '🏆';
       } else if (isDraw) {
         title.textContent = 'НИЧЬЯ';
         if (icon) icon.textContent = '🤝';
       } else {
-        title.textContent = 'ПОРАЖЕНИЕ';
+        title.textContent = penaltyResult ? 'ПОРАЖЕНИЕ ПО ПЕНАЛЬТИ' : 'ПОРАЖЕНИЕ';
         if (icon) icon.textContent = '🛡️';
       }
     }
 
     if (teams) teams.textContent = `МОЙ КЛУБ vs ${simCurrentStageInfo.club}`;
-    if (score) score.textContent = `${simScoreUser} : ${simScoreAi}`;
+    
+    // Display score with penalties if applicable
+    if (score) {
+      if (penaltyResult) {
+        score.textContent = `${simScoreUser} : ${simScoreAi} (пен. ${penaltyResult.userPen}:${penaltyResult.aiPen})`;
+      } else {
+        score.textContent = `${simScoreUser} : ${simScoreAi}`;
+      }
+    }
+
+    // Populate Post-Match Statistics
+    const statUserPoss = document.getElementById('statUserPoss');
+    const statAiPoss = document.getElementById('statAiPoss');
+    const statPossFill = document.getElementById('statPossFill');
+    const statUserShots = document.getElementById('statUserShots');
+    const statAiShots = document.getElementById('statAiShots');
+    const statUserFouls = document.getElementById('statUserFouls');
+    const statAiFouls = document.getElementById('statAiFouls');
+    const statUserSaves = document.getElementById('statUserSaves');
+    const statAiSaves = document.getElementById('statAiSaves');
+
+    if (statUserPoss) statUserPoss.textContent = `${simStats.userPoss}%`;
+    if (statAiPoss) statAiPoss.textContent = `${simStats.aiPoss}%`;
+    if (statPossFill) statPossFill.style.width = `${simStats.userPoss}%`;
+    if (statUserShots) statUserShots.textContent = `${simStats.userShots} (${simStats.userShotsOnTarget})`;
+    if (statAiShots) statAiShots.textContent = `${simStats.aiShots} (${simStats.aiShotsOnTarget})`;
+    if (statUserFouls) statUserFouls.textContent = `${simStats.userFouls}`;
+    if (statAiFouls) statAiFouls.textContent = `${simStats.aiFouls}`;
+    if (statUserSaves) statUserSaves.textContent = `${simStats.userSaves}`;
+    if (statAiSaves) statAiSaves.textContent = `${simStats.aiSaves}`;
+
     if (rewards) {
       rewards.innerHTML = `
         <div class="result-reward-item"><span>${tournamentMsg}</span><b>${isWin ? '✓' : '—'}</b></div>
         <div class="result-reward-item"><span>Матчевая выплата</span><b>+${coinReward} ★</b></div>
         ${goalBonus > 0 ? `<div class="result-reward-item"><span>Бонус за ${simScoreUser} мяч(а)</span><b>+${goalBonus} ★</b></div>` : ''}
         ${tournamentWon ? `<div class="result-reward-item" style="color:var(--gold);"><span>Трофейный куш</span><b>+${tourn.rewards.coins} ★</b></div>` : ''}
+        <div class="result-reward-item" style="color:var(--cyan);"><span>Тренировка основы</span><b>+1 TP (MVP: +2 TP)</b></div>
         <div class="result-reward-item"><span>Опыт карточек основы</span><b>+25 XP всем</b></div>
         <div class="result-reward-item"><span>Сыгранность состава</span><b>+1 матч</b></div>
       `;
     }
 
     if (btnContinue) {
+      const curStages = getTournamentStages(tourn.id);
       if (isWin && !tournamentWon) {
         btnContinue.style.display = 'block';
-        btnContinue.textContent = `🏆 Играть ${tourn.stages[tState.stage].name}`;
+        btnContinue.textContent = `🏆 Играть ${curStages[tState.stage].name}`;
       } else if (tournamentWon) {
         btnContinue.style.display = 'block';
         btnContinue.textContent = '🏆 Выбрать другой турнир';
@@ -3459,209 +5993,59 @@ function finishSimMatch() {
   }, 900);
 }
 
-// 2D RADAR CANVAS RENDERING
+// 2D RADAR CANVAS RENDERING & FSM ENGINE DRIVER
+let lastSimFrameTime = performance.now();
+
 function startRadarLoop() {
   const canvas = document.getElementById('simRadarCanvas');
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  let frameCount = 0;
+  const wrap = document.querySelector('.sim-radar-wrap');
+  if (!matchRenderer) {
+    matchRenderer = new MatchRenderer();
+  }
+  matchRenderer.init(wrap, canvas);
 
-  function render() {
-    if (!canvas) return;
-    frameCount++;
+  lastSimFrameTime = performance.now();
 
-    const w = canvas.width;
-    const h = canvas.height;
-    const scaleX = w / 414;
-    const scaleY = h / 230;
+  function simFrame(now) {
+    if (!simRunning && simMinute >= 90) return;
 
-    ctx.save();
-    ctx.scale(scaleX, scaleY);
-    ctx.clearRect(0, 0, 414, 230);
+    const rawDt = Math.min(0.08, (now - lastSimFrameTime) / 1000);
+    lastSimFrameTime = now;
 
-    // 1. Turf & Subtle Mowing Stripes
-    ctx.fillStyle = '#0a2113';
-    ctx.fillRect(0, 0, 414, 230);
-
-    const stripeW = 414 / 8;
-    for (let i = 0; i < 8; i += 2) {
-      ctx.fillStyle = 'rgba(0, 255, 136, 0.025)';
-      ctx.fillRect(i * stripeW, 0, stripeW, 230);
+    if (simRunning && !simIsPaused && matchEngine2D) {
+      const dt = rawDt * simSpeedMode;
+      matchEngine2D.update(dt);
     }
 
-    // 2. Pitch Lines
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
-    ctx.lineWidth = 1.6;
-
-    ctx.strokeRect(12, 12, 390, 206);
-
-    ctx.beginPath();
-    ctx.moveTo(207, 12);
-    ctx.lineTo(207, 218);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.arc(207, 115, 36, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-    ctx.beginPath();
-    ctx.arc(207, 115, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Boxes & Arcs
-    ctx.strokeRect(12, 55, 62, 120);
-    ctx.strokeRect(12, 80, 24, 70);
-    ctx.beginPath(); ctx.arc(52, 115, 2, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(52, 115, 24, -0.9, 0.9); ctx.stroke();
-
-    ctx.strokeRect(340, 55, 62, 120);
-    ctx.strokeRect(378, 80, 24, 70);
-    ctx.beginPath(); ctx.arc(362, 115, 2, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(362, 115, 24, Math.PI - 0.9, Math.PI + 0.9); ctx.stroke();
-
-    // Goal Nets
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
-    ctx.strokeRect(4, 92, 8, 46);
-    ctx.strokeRect(402, 92, 8, 46);
-
-    // Dynamic Team Shifts based on Ball Position and Tactical Pad
-    const ballPosRatio = (simBall.x - 207) / 200; // -1 to +1
-    let tacticShiftX = 0;
-    if (simCurrentTactic === 'bus') tacticShiftX = -24;
-    else if (simCurrentTactic === 'press') tacticShiftX = 26;
-
-    // 3. Update & Draw Blue Team (User)
-    simBluePlayers.forEach((p, i) => {
-      const breath = Math.sin(frameCount * 0.05 + i) * 1.2;
-
-      let shiftX = tacticShiftX;
-      if (p.role === 'CB' || p.role === 'LB' || p.role === 'RB') {
-        shiftX += ballPosRatio > 0 ? ballPosRatio * 32 : ballPosRatio * 15;
-      } else if (p.role === 'CM' || p.role === 'CAM') {
-        shiftX += ballPosRatio * 24;
-      }
-
-      // Smooth kinematic lerp
-      p.x += ((p.targetX + shiftX) - p.x) * 0.055;
-      p.y += ((p.targetY + breath) - p.y) * 0.055;
-
-      ctx.save();
-      ctx.shadowColor = '#00e5ff';
-      ctx.shadowBlur = 8;
-      ctx.fillStyle = '#00c3ff';
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 6.2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.restore();
-    });
-
-    // 4. Update & Draw Red Team (Rival)
-    simRedPlayers.forEach((p, i) => {
-      const breath = Math.cos(frameCount * 0.05 + i) * 1.2;
-      let shiftX = 0;
-      if (p.role === 'CB' || p.role === 'LB' || p.role === 'RB') {
-        shiftX = ballPosRatio < 0 ? ballPosRatio * 32 : ballPosRatio * 15;
-      } else if (p.role === 'CM' || p.role === 'CAM') {
-        shiftX = ballPosRatio * 24;
-      }
-
-      p.x += ((p.targetX + shiftX) - p.x) * 0.055;
-      p.y += ((p.targetY + breath) - p.y) * 0.055;
-
-      ctx.save();
-      ctx.shadowColor = '#ff3b30';
-      ctx.shadowBlur = 8;
-      ctx.fillStyle = '#ff2b2b';
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 6.2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.restore();
-    });
-
-    // 5. Update & Draw Ball with Smooth Lerp
-    const ballLerp = simPlayPhase === 'FINISHING' ? 0.18 : 0.09;
-    simBall.x += (simBall.targetX - simBall.x) * ballLerp;
-    simBall.y += (simBall.targetY - simBall.y) * ballLerp;
-
-    ctx.save();
-    ctx.shadowColor = '#ffffff';
-    ctx.shadowBlur = 10;
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.arc(simBall.x, simBall.y, 3.8, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#000000';
-    ctx.lineWidth = 0.8;
-    ctx.stroke();
-    ctx.restore();
-
-    // 6. Draw Name Badge over active player with ball
-    if (simCarrier && simCarrier.name) {
-      let carrierDot = null;
-      if (simCarrier.team === 'user') {
-        carrierDot = simBluePlayers[simCarrier.index] || simBluePlayers[9];
-      } else {
-        carrierDot = simRedPlayers[simCarrier.index] || simRedPlayers[9];
-      }
-
-      if (carrierDot) {
-        ctx.save();
-        const tagText = `${simCarrier.name.toUpperCase()} ⚽`;
-        ctx.font = 'bold 8.5px "Rajdhani", sans-serif';
-        const textW = ctx.measureText(tagText).width;
-        const tagX = carrierDot.x;
-        const tagY = carrierDot.y - 12;
-
-        ctx.fillStyle = 'rgba(9, 12, 21, 0.9)';
-        ctx.strokeStyle = simCarrier.team === 'user' ? '#00e5ff' : '#ff3b30';
-        ctx.lineWidth = 1;
-
-        const rectX = tagX - textW / 2 - 5;
-        const rectY = tagY - 9;
-        ctx.beginPath();
-        if (ctx.roundRect) ctx.roundRect(rectX, rectY, textW + 10, 12, 4);
-        else ctx.rect(rectX, rectY, textW + 10, 12);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.fillStyle = '#ffffff';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(tagText, tagX, tagY - 3);
-        ctx.restore();
-      }
+    if (matchRenderer && matchEngine2D) {
+      matchRenderer.render(matchEngine2D);
     }
 
-    ctx.restore();
-
-    if (simRunning || simMinute < 90) {
-      simAnimId = requestAnimationFrame(render);
-    }
+    simAnimId = requestAnimationFrame(simFrame);
   }
 
-  cancelAnimationFrame(simAnimId);
-  simAnimId = requestAnimationFrame(render);
+  if (simAnimId) cancelAnimationFrame(simAnimId);
+  simAnimId = requestAnimationFrame(simFrame);
 }
 
-// Tactical pad click handling
+// Tactical pad click handling with 5s cooldown
 document.querySelectorAll('#simTacticsBar .tactic-btn').forEach(btn => {
   btn.addEventListener('click', () => {
+    if (simTacticCooldown > 0) {
+      showToast(`⏳ Перестройка тактики через ${simTacticCooldown} сек.`);
+      return;
+    }
     const tactic = btn.dataset.tactic;
     updateTacticsUI(tactic);
+    if (matchEngine2D) matchEngine2D.setTactic(tactic);
     if (tactic === 'bus') {
-      addSimFeedItem(simMinute, '🛡️', 'Тренер даёт команду: «Автобус»! Линия обороны прижимается к своей штрафной (-40% риск).');
+      addSimFeedItem(simMinute, '🛡️', 'Тренер даёт команду: «Автобус»! Линия обороны прижимается к своей штрафной (-35% риска голов).');
     } else if (tactic === 'press') {
-      addSimFeedItem(simMinute, '⚔️', 'Тренер даёт команду: «Все в атаку / Прессинг!» Высокая линия обороны, удары удваиваются!');
+      addSimFeedItem(simMinute, '⚔️', 'Тренер даёт команду: «Все в атаку / Прессинг!» Высокая линия обороны, давление на соперника.');
     } else {
       addSimFeedItem(simMinute, '⚖️', 'Тактическое построение возвращено в баланс.');
     }
+    triggerTacticCooldown(5);
   });
 });
 
@@ -3789,7 +6173,10 @@ if (btnConfirmSub) {
       simUsedBenchIds.add(subPlayer.id);
       delete simUserInjuries[simSelectedPitchSlot];
 
-      // Update 2D radar player name
+      // Update 2D radar engine & player name
+      if (matchEngine2D) {
+        matchEngine2D.substituteUserPlayer(simSelectedPitchSlot, subPlayer);
+      }
       if (simBluePlayers[simSelectedPitchSlot]) {
         simBluePlayers[simSelectedPitchSlot].name = subPlayer.name;
       }
@@ -3880,10 +6267,25 @@ if (btnCloseCardAction) {
   });
 }
 
+const btnOpenTrainingHub = document.getElementById('btnOpenTrainingHub');
+if (btnOpenTrainingHub) {
+  btnOpenTrainingHub.addEventListener('click', () => {
+    openTrainingHubModal();
+  });
+}
+
+const btnCloseTrainingHub = document.getElementById('btnCloseTrainingHub');
+if (btnCloseTrainingHub) {
+  btnCloseTrainingHub.addEventListener('click', () => {
+    const modal = document.getElementById('modalTrainingHub') || document.getElementById('modalTrainingCamp');
+    if (modal) modal.classList.add('hidden');
+  });
+}
+
 const btnCloseTrainingCamp = document.getElementById('btnCloseTrainingCamp');
 if (btnCloseTrainingCamp) {
   btnCloseTrainingCamp.addEventListener('click', () => {
-    const modal = document.getElementById('modalTrainingCamp');
+    const modal = document.getElementById('modalTrainingHub') || document.getElementById('modalTrainingCamp');
     if (modal) modal.classList.add('hidden');
   });
 }
@@ -3930,14 +6332,15 @@ if (btnSimSpeed) {
     if (simSpeedMode === 1) {
       simSpeedMode = 2;
       btnSimSpeed.textContent = '2x';
-      startSimClock();
+      if (simRunning) startSimClock();
     } else if (simSpeedMode === 2) {
       simSpeedMode = 3;
       btnSimSpeed.textContent = '⏩ Итог';
-      skipSimMatchToEnd();
+      if (simRunning) skipSimMatchToEnd();
     } else {
       simSpeedMode = 1;
       btnSimSpeed.textContent = '1x';
+      if (simRunning) startSimClock();
     }
   });
 }
@@ -3950,21 +6353,17 @@ if (btnBackFromMyClub) {
   });
 }
 
-const btnMyClubAutoSquad = document.getElementById('btnMyClubAutoSquad');
-if (btnMyClubAutoSquad) {
-  btnMyClubAutoSquad.addEventListener('click', () => {
-    autoBuildMyClubSquad(true);
+const btnAutoSquadEl = document.getElementById('btnAutoSquad') || document.getElementById('btnMyClubAutoSquad');
+if (btnAutoSquadEl) {
+  btnAutoSquadEl.addEventListener('click', () => {
+    handleAutoSquadClick();
   });
 }
 
 const btnOpenTournaments = document.getElementById('btnOpenTournaments');
 if (btnOpenTournaments) {
   btnOpenTournaments.addEventListener('click', () => {
-    const squad = save.myClubSquad || [];
-    const filledCount = squad.filter(Boolean).length;
-    if (filledCount < 11) {
-      autoBuildMyClubSquad(false);
-    }
+    ensureValidSquad();
     openTournamentsModal();
   });
 }
@@ -4011,6 +6410,56 @@ if (btnSimBackToMenu) {
     showScreen('screenMenu');
   });
 }
+
+// My Club Formation Picker Modal
+const btnOpenFormationMC = document.getElementById('btnOpenFormationMC');
+if (btnOpenFormationMC) {
+  btnOpenFormationMC.addEventListener('click', openFormationPickerMC);
+}
+
+const btnCloseFormationMC = document.getElementById('btnCloseFormationMC');
+if (btnCloseFormationMC) {
+  btnCloseFormationMC.addEventListener('click', () => {
+    const modal = document.getElementById('modalFormationMC');
+    if (modal) modal.classList.add('hidden');
+  });
+}
+
+// Penalty Shootout Interactive Target Listeners
+function handlePenaltyTargetClick(zone) {
+  if (!penaltyState) return;
+  if (penaltyState.phase === 'USER_SHOOT') {
+    handlePenaltyUserShot(zone);
+  } else if (penaltyState.phase === 'AI_SHOOT') {
+    handlePenaltyUserSave(zone);
+  }
+}
+
+const btnPenTargetLeft = document.getElementById('btnPenTargetLeft');
+if (btnPenTargetLeft) {
+  btnPenTargetLeft.addEventListener('click', () => handlePenaltyTargetClick('left'));
+}
+const btnPenTargetCenter = document.getElementById('btnPenTargetCenter');
+if (btnPenTargetCenter) {
+  btnPenTargetCenter.addEventListener('click', () => handlePenaltyTargetClick('center'));
+}
+const btnPenTargetRight = document.getElementById('btnPenTargetRight');
+if (btnPenTargetRight) {
+  btnPenTargetRight.addEventListener('click', () => handlePenaltyTargetClick('right'));
+}
+
+// Universal Modal Close Handler for all modals
+document.addEventListener('click', (e) => {
+  const btnClose = e.target.closest('.btn-modal-close');
+  if (btnClose) {
+    const overlay = btnClose.closest('.modal-overlay');
+    if (overlay) {
+      overlay.classList.add('hidden');
+      overlay.style.display = 'none';
+      setTimeout(() => { overlay.style.display = ''; }, 50);
+    }
+  }
+});
 
 /* ═══════════════════════════════════════════════════════════════════
    20. INITIALIZATION
